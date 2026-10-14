@@ -3,6 +3,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { checkNameSchema, deliveryStagesSchema, stageChecksSchema } from "./delivery-plan";
 import { setupPlanSchema } from "./setup-plan";
+import { TASK_KINDS } from "./task-kinds";
 
 const MAX_TEXT_LENGTH = 4_096;
 const MAX_LIST_ITEMS = 128;
@@ -43,6 +44,7 @@ export const taskContextSchema = z
     decisions: boundedList,
     requiredChecks: z.array(checkNameSchema).max(MAX_LIST_ITEMS),
     allowedActions: boundedList,
+    kind: z.enum(TASK_KINDS).optional(),
     deliveryTarget: z.enum(["pr", "local"]).optional(),
     deliveryStages: deliveryStagesSchema.optional(),
     stageChecks: stageChecksSchema.optional(),
