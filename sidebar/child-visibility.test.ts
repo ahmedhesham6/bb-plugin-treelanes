@@ -7,7 +7,7 @@ it("reveals linked agent descendants, keeps internal and unrelated threads hidde
     makeThreadResponse({ id: "deep", parentThreadId: "review", visibility: "hidden" }),
     makeThreadResponse({ id: "review", parentThreadId: "root", visibility: "hidden" }),
     makeThreadResponse({ id: "root", visibility: "visible" }),
-    makeThreadResponse({ id: "setup", parentThreadId: "root", visibility: "hidden", originPluginId: "workflow-board" }),
+    makeThreadResponse({ id: "setup", parentThreadId: "root", visibility: "hidden", originPluginId: "treelanes" }),
     makeThreadResponse({ id: "orphan", parentThreadId: "missing", visibility: "hidden" }),
     makeThreadResponse({ id: "cycle", parentThreadId: "cycle", visibility: "hidden" }),
     makeThreadResponse({ id: "other-env", parentThreadId: "root", visibility: "hidden" }),

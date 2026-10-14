@@ -130,13 +130,13 @@ async function recordStageCompletion(
   thread: ReturnType<typeof worktreeThread>,
 ): Promise<void> {
   const contextText = await harness.behavior.callAgentTool(
-    "workflow_board_get_context",
+    "treelanes_get_context",
     {},
     { threadId: thread.id, projectId: thread.projectId },
   );
   const context = JSON.parse(String(contextText)) as CompletionContext;
   await harness.behavior.callAgentTool(
-    "workflow_board_complete_stage",
+    "treelanes_complete_stage",
     {
       stage: context.stage,
       stageUpdatedAt: context.stageUpdatedAt,
@@ -166,7 +166,7 @@ async function emitStageCompletion(
   });
 }
 
-describe("Workflow Board backend", () => {
+describe("Board backend", () => {
   it("starts configured TDD work in the same Git Worktree", async () => {
     const design = worktreeThread({
       id: "thread-design",
@@ -178,7 +178,7 @@ describe("Workflow Board backend", () => {
     const spawned: unknown[] = [];
     const sdk = sdkFor([design]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       settings: {
         tddProviderId: "codex",
         tddModel: "gpt-5.6-sol",
@@ -245,7 +245,7 @@ describe("Workflow Board backend", () => {
     const spawned: unknown[] = [];
     const sdk = sdkFor([tdd]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       settings: {
         reviewProviderId: "codex",
         reviewModel: "gpt-5.6-sol",
@@ -306,7 +306,7 @@ describe("Workflow Board backend", () => {
     const spawned: unknown[] = [];
     const sdk = sdkFor([quality]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: {
         ...sdk,
         providers: {
@@ -386,7 +386,7 @@ describe("Workflow Board backend", () => {
       const spawned: unknown[] = [];
       const sdk = sdkFor(threads);
       const { bb, harness } = createFakePluginHost({
-        pluginId: "workflow-board",
+        pluginId: "treelanes",
         sdk: {
           ...sdk,
           threads: {
@@ -452,7 +452,7 @@ describe("Workflow Board backend", () => {
     const spawned: unknown[] = [];
     const sdk = sdkFor([main, quality]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: {
         ...sdk,
         threads: {
@@ -497,7 +497,7 @@ describe("Workflow Board backend", () => {
     const spawned: unknown[] = [];
     const sdk = sdkFor([simplify]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       settings: {
         simplifyToPrMode: "ask",
         prProviderId: "codex",
@@ -573,7 +573,7 @@ describe("Workflow Board backend", () => {
     const spawned: unknown[] = [];
     const sdk = sdkFor([simplify]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: {
         ...sdk,
         threads: {
@@ -633,7 +633,7 @@ describe("Workflow Board backend", () => {
     thread.providerId = "claude-code";
     const sdk = sdkFor([thread]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: {
         ...sdk,
         threads: {
@@ -681,7 +681,7 @@ describe("Workflow Board backend", () => {
     let spawned: unknown;
     const sdk = sdkFor([]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: {
         ...sdk,
         threads: {
@@ -705,7 +705,7 @@ describe("Workflow Board backend", () => {
     expect(spawned).toEqual({
       ...request,
       origin: "plugin",
-      originPluginId: "workflow-board",
+      originPluginId: "treelanes",
     });
     expect(result).toEqual({ threadId: "thread-new" });
     await harness.lifecycle.dispose();
@@ -725,13 +725,13 @@ describe("Workflow Board backend", () => {
       parentThreadId: root.id,
     });
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor([root, child]),
     });
     await plugin(bb);
 
     const message = await harness.behavior.callAgentTool(
-      "workflow_board_move_card",
+      "treelanes_move_card",
       { stage: "quality", note: "Review pass 2" },
       { threadId: child.id, projectId: root.projectId },
     );
@@ -775,7 +775,7 @@ describe("Workflow Board backend", () => {
     const spawned: unknown[] = [];
     const sdk = sdkFor([thread]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: {
         ...sdk,
         threads: {
@@ -794,7 +794,7 @@ describe("Workflow Board backend", () => {
       stage: "design",
     });
     const result = await harness.behavior.callAgentTool(
-      "workflow_board_move_card",
+      "treelanes_move_card",
       { stage: "tdd", note: "I plan to start implementation." },
       { threadId: thread.id, projectId: thread.projectId },
     );
@@ -822,7 +822,7 @@ describe("Workflow Board backend", () => {
     const spawned: unknown[] = [];
     const sdk = sdkFor([tdd]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: {
         ...sdk,
         threads: {
@@ -842,7 +842,7 @@ describe("Workflow Board backend", () => {
     await plugin(bb);
 
     await harness.behavior.callAgentTool(
-      "workflow_board_move_card",
+      "treelanes_move_card",
       { stage: "tdd", note: "Running /tdd in this thread." },
       { threadId: tdd.id, projectId: tdd.projectId },
     );
@@ -876,7 +876,7 @@ describe("Workflow Board backend", () => {
     const spawned: unknown[] = [];
     const sdk = sdkFor(threads);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       settings: {
         reviewProviderId: "codex",
         reviewModel: "gpt-5.6-sol",
@@ -918,7 +918,7 @@ describe("Workflow Board backend", () => {
     await recordStageCompletion(harness, tdd);
     tdd.status = "idle";
     await harness.behavior.callAgentTool(
-      "workflow_board_move_card",
+      "treelanes_move_card",
       { stage: "quality", note: "TDD work is complete." },
       { threadId: tdd.id, projectId: tdd.projectId },
     );
@@ -957,7 +957,7 @@ describe("Workflow Board backend", () => {
     const spawned: ReturnType<typeof worktreeThread>[] = [];
     const sdk = sdkFor(threads);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: {
         ...sdk,
         threads: {
@@ -991,7 +991,7 @@ describe("Workflow Board backend", () => {
     });
     const quality = spawned[0]!;
     const staleMove = await harness.behavior.callAgentTool(
-      "workflow_board_move_card",
+      "treelanes_move_card",
       { stage: "tdd", note: "Late TDD child summary." },
       { threadId: main.id, projectId: main.projectId },
     );
@@ -1023,7 +1023,7 @@ describe("Workflow Board backend", () => {
     const spawned: unknown[] = [];
     const sdk = sdkFor([review]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: {
         ...sdk,
         threads: {
@@ -1043,7 +1043,7 @@ describe("Workflow Board backend", () => {
     await plugin(bb);
 
     await harness.behavior.callAgentTool(
-      "workflow_board_move_card",
+      "treelanes_move_card",
       { stage: "review", note: "External review only. No code changes." },
       { threadId: review.id, projectId: review.projectId },
     );
@@ -1064,7 +1064,7 @@ describe("Workflow Board backend", () => {
 
   it("maps /code-review to Code Review in agent instructions", async () => {
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       agentSkillIds: shippedSkills,
     });
     await plugin(bb);
@@ -1105,7 +1105,7 @@ describe("Workflow Board backend", () => {
   });
 
   it("lists the fixed workflow stages through the CLI", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "workflow-board" });
+    const { bb, harness } = createFakePluginHost({ pluginId: "treelanes" });
     await plugin(bb);
     const result = await harness.behavior.runCli(["stages"]);
     expect(result.exitCode).toBe(0);
@@ -1128,7 +1128,7 @@ describe("Workflow Board backend", () => {
       parentThreadId: root.id,
     });
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor([root, child]),
     });
     await plugin(bb);
@@ -1150,7 +1150,7 @@ describe("Workflow Board backend", () => {
     });
 
     await harness.behavior.callAgentTool(
-      "workflow_board_move_card",
+      "treelanes_move_card",
       { stage: "design", note: "The design worker owns this stage." },
       { threadId: child.id, projectId: child.projectId },
     );
@@ -1193,7 +1193,7 @@ describe("Workflow Board backend", () => {
     let spawnIndex = 0;
     const sdk = sdkFor(threads);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: {
         ...sdk,
         threads: {
@@ -1312,13 +1312,13 @@ describe("Workflow Board backend", () => {
     };
     const sdk = sdkFor([]);
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: { ...sdk, threads: { ...sdk.threads, get: async () => thread, list: async () => [thread] } },
     });
     await plugin(bb);
     try {
       await expect(harness.behavior.callRpc("settleThread", { threadId: thread.id })).rejects.toThrow(
-        reason === "outside" ? "not on the Workflow Board" : "live work or a pending question",
+        reason === "outside" ? "not on the board" : "live work or a pending question",
       );
       expect(await harness.behavior.callRpc("listLifecycle", {})).toEqual({ rows: [] });
       expect(harness.realtimeSignals).toHaveLength(0);
@@ -1336,7 +1336,7 @@ describe("Workflow Board backend", () => {
       environmentWorkspaceDisplayKind: "other" as const,
     };
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor([thread]),
     });
     await plugin(bb);
@@ -1348,7 +1348,7 @@ describe("Workflow Board backend", () => {
   });
 
   it("rejects an unknown stage", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "workflow-board" });
+    const { bb, harness } = createFakePluginHost({ pluginId: "treelanes" });
     await plugin(bb);
     const result = await harness.behavior.runCli(["move", "ship"]);
     expect(result.exitCode).toBe(2);

@@ -14,7 +14,7 @@
   },
   "bb": {
     "name": "Treelanes",
-    "description": "Track Git worktrees and their threads through design, build, review, and merge, with a worktree sidebar.",
+    "description": "Track Git worktrees and their threads through design, build, review, and merge, with a sidebar grouped by worktree.",
     "branding": {
       "icon": "Columns2"
     },

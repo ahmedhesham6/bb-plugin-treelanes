@@ -28,7 +28,7 @@ export function childVisibility(bb: BbPluginApi) {
             return false;
           seen.add(current.id);
           if (current.visibility === "visible") return true;
-          // Hidden plugin workers, such as Workflow Board setup, are internal.
+          // Hidden plugin workers, such as board setup workers, are internal.
           if (current.originPluginId) return false;
           current = current.parentThreadId ? threads.get(current.parentThreadId) : undefined;
         }

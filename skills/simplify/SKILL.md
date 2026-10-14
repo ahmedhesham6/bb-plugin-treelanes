@@ -1,6 +1,6 @@
 ---
 name: simplify
-description: Simplify a task's changes without changing behavior. Use for a Workflow Board Simplify step or an explicit request to reduce code and complexity.
+description: Simplify a task's changes without changing behavior. Use for a Treelanes Simplify step or an explicit request to reduce code and complexity.
 ---
 
 # Simplify

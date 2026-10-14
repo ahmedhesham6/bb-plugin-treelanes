@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { PLUGIN_ID } from "./plugin-id";
 import type { SetupPlan, SetupStep } from "./setup-plan";
 
 export const TASK_KINDS = ["feature", "bug-fix", "refactor", "perf"] as const;
@@ -9,7 +10,7 @@ type TemplateStep = Pick<SetupStep, "id" | "stage" | "title" | "instructions" | 
 // bb's catalog ID for a skill in this plugin's skills/ folder. Names would
 // collide with provider copies of the same skill.
 const skill = (name: string) =>
-  `skill_${createHash("sha256").update(`bb-plugin:workflow-board\0${name}/SKILL.md`).digest("hex")}`;
+  `skill_${createHash("sha256").update(`bb-plugin:${PLUGIN_ID}\0${name}/SKILL.md`).digest("hex")}`;
 
 const quality: TemplateStep = {
   id: "quality", stage: "quality", title: "Strict review of the task diff",

@@ -20,7 +20,7 @@ export function createStageContinuation(bb: BbPluginApi, db: Db, disposed: () =>
     const events = await bb.sdk.threads.events.list({ threadId, types: ["turn/completed", "system/thread/interrupted", "client/turn/requested"], order: "desc", limit: "1" });
     const last = events[0];
     if (!last?.id || last.type !== "turn/completed" || last.data.status !== "completed" || disposed() || !eligible()) return;
-    await sendOnce(threadId, last.id, assignment, `${DELIVERY_SKILL_INSTRUCTION}\nContinue this ${stage} step in the same thread; its normal turn ended without a receipt. Read fresh workflow_board_get_context, finish the remaining work, and submit actual check evidence. For a blocker or nextAction, read /delivery's references/recovery.md.`, eligible);
+    await sendOnce(threadId, last.id, assignment, `${DELIVERY_SKILL_INSTRUCTION}\nContinue this ${stage} step in the same thread; its normal turn ended without a receipt. Read fresh treelanes_get_context, finish the remaining work, and submit actual check evidence. For a blocker or nextAction, read /delivery's references/recovery.md.`, eligible);
   }
 
   async function sendOnce(threadId: string, turnId: string, assignment: string, text: string, eligible: () => boolean) {
@@ -54,7 +54,7 @@ export function createStageContinuation(bb: BbPluginApi, db: Db, disposed: () =>
     if (events[0]?.type !== "turn/completed" || events[0].data.status !== "completed") return;
     const key = createHash("sha256").update(`${assignment}:${workerId}:${reason}`).digest("hex");
     await sendOnce(orchestratorId, key, `help:${assignment}`,
-      `${DELIVERY_SKILL_INSTRUCTION}\nYou are the persistent task orchestrator. This is a child-blocker review; read /delivery's references/orchestration.md. Read fresh workflow_board_get_context and the output of child ${workerId}, then guide that existing child.\nRecorded blocker: ${reason.slice(0, 4096)}`, eligible);
+      `${DELIVERY_SKILL_INSTRUCTION}\nYou are the persistent task orchestrator. This is a child-blocker review; read /delivery's references/orchestration.md. Read fresh treelanes_get_context and the output of child ${workerId}, then guide that existing child.\nRecorded blocker: ${reason.slice(0, 4096)}`, eligible);
   }
   return { resume, read, help };
 }

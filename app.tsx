@@ -597,7 +597,7 @@ function StageColumn({
   );
 }
 
-function WorkflowBoard({ subPath }: { subPath: string }) {
+function TreelanesBoard({ subPath }: { subPath: string }) {
   const rpc = useRpc<typeof rpcContract>();
   const { projectId } = useBbContext();
   const navigate = useBbNavigate();
@@ -934,7 +934,7 @@ function WorkflowBoard({ subPath }: { subPath: string }) {
                   placeholder={`What should the agent do in ${card.worktreeName}?`}
                   layout="document"
                   focusRequest={1}
-                  draftKey={`workflow-board:new-thread:${card.environmentId}`}
+                  draftKey={`treelanes:new-thread:${card.environmentId}`}
                   onSubmit={async (request) => {
                     const result = await rpc.call("createThread", { request });
                     navigate.toThread(result.threadId);
@@ -1391,15 +1391,15 @@ function WorkflowBoard({ subPath }: { subPath: string }) {
 
 export default definePluginApp((app) => {
   app.slots.navPanel({
-    id: "workflow-board",
-    title: "Workflow Board",
-    icon: "Columns",
+    id: "board",
+    title: "Treelanes",
+    icon: "Columns2",
     path: "board",
-    component: WorkflowBoard,
+    component: TreelanesBoard,
   });
   app.slots.experimental_threadList({
     id: "inbox",
-    title: "Worktree Sidebar",
+    title: "Treelanes",
     description: "One main thread per worktree. Children follow selection.",
     component: ThreadInbox,
   });

@@ -352,7 +352,7 @@ export function ThreadInbox({
     return (
       <>
         <p role="alert" className="px-3 py-2 text-xs">
-          Could not load Worktree Sidebar. Showing BB's list.
+          Could not load Treelanes. Showing BB's list.
         </p>
         <Original />
       </>

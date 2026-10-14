@@ -8,7 +8,7 @@ import {
 } from "@get-bb/plugin-sdk/testing/app";
 import { STAGES } from "./workflow";
 
-describe("Workflow Board panel", () => {
+describe("Board panel", () => {
   it("opens a card thread in the right pane", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const slot = renderSlot(

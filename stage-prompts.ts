@@ -33,7 +33,7 @@ export function buildStagePrompt(input: {
     ["tdd", "quality", "simplify"].includes(input.stage) ? IMPLEMENTATION_GUIDE : "",
     input.stage === "tdd" ? TDD_STEP_INSTRUCTION : "",
     input.stage === "pr" ? "Before PR actions, read /delivery's references/pr-watch.md. For the PR description, use /visual-pr instead of /show-me or the older description-format guidance. Then continue /babysit-pr; publishing the description does not end PR Watch." : "",
-    "Read workflow_board_get_context. Follow the saved task and activeStep; load execution.selectedSkills and use the exact requiredChecks. Fresh context governs the work.",
+    "Read treelanes_get_context. Follow the saved task and activeStep; load execution.selectedSkills and use the exact requiredChecks. Fresh context governs the work.",
     `Assignment: ${JSON.stringify(assignment)}`,
   ].filter(Boolean).join("\n");
 }

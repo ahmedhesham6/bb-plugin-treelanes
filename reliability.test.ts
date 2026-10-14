@@ -221,7 +221,7 @@ function seedLaunch(
     );
 }
 
-describe("Workflow Board reliability", () => {
+describe("Board reliability", () => {
   it.each([
     {
       reason: "no pull request",
@@ -250,7 +250,7 @@ describe("Workflow Board reliability", () => {
       parentThreadId: null,
     });
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor([worktree], {
         pullRequests: { [worktree.environmentId]: pullRequest },
       }),
@@ -276,7 +276,7 @@ describe("Workflow Board reliability", () => {
       parentThreadId: null,
     });
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor([worktree], {
         pullRequests: {
           [worktree.environmentId]: availablePullRequest("merged", "feat/board"),
@@ -319,7 +319,7 @@ describe("Workflow Board reliability", () => {
     const threads = [root, unrelated];
     const spawned: WorktreeThread[] = [];
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor(threads, {
         spawn: async () => {
           const worker = worktreeThread({
@@ -367,13 +367,13 @@ describe("Workflow Board reliability", () => {
       parentThreadId: null,
     });
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor([review]),
     });
     await plugin(bb);
 
     const message = await harness.behavior.callAgentTool(
-      "workflow_board_move_card",
+      "treelanes_move_card",
       { stage: "review", note: "External review only." },
       { threadId: review.id, projectId: review.projectId },
     );
@@ -402,7 +402,7 @@ describe("Workflow Board reliability", () => {
     const threads = [root];
     let spawnAttempts = 0;
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor(threads, {
         spawn: async () => {
           spawnAttempts += 1;
@@ -462,7 +462,7 @@ describe("Workflow Board reliability", () => {
     });
     let spawnAttempts = 0;
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor([root], {
         spawn: async () => {
           spawnAttempts += 1;
@@ -529,7 +529,7 @@ describe("Workflow Board reliability", () => {
     const threads = [root];
     let spawnAttempts = 0;
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor(threads, {
         spawn: async () => {
           spawnAttempts += 1;
@@ -588,7 +588,7 @@ describe("Workflow Board reliability", () => {
       releaseSecondSpawn = resolve;
     });
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor(threads, {
         spawn: async () => {
           spawnAttempts += 1;
@@ -727,7 +727,7 @@ describe("Workflow Board reliability", () => {
       "environment-orphan": environment("environment-orphan", "project-one", "feat/orphan"),
     };
     const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
+      pluginId: "treelanes",
       sdk: sdkFor(threads, {
         environments,
         spawn: async (request: unknown) => {

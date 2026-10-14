@@ -15,7 +15,7 @@ function board(stage: "design" | "quality" | "review", settled = false) {
   }] };
 }
 
-describe("Settle from Workflow Board", () => {
+describe("Settle from the board", () => {
   it.each(["design", "quality", "review"] as const)("settles from %s without opening the thread and removes the empty card", async (stage) => {
     const app = await loadPluginApp(() => import("./app"));
     let settled = false;

@@ -1001,7 +1001,7 @@ export default async function plugin(bb: BbPluginApi) {
       automaticSetup: null, blockedAttempt: null, activeStep: null, nextStep: null,
       setupComplete: false, completedStepIds: [], execution: null, requiredChecks: [],
       nextStage: null, paused: paused(environmentId), workspaceDigest: null,
-      instruction: "No Worktree Stage is assigned. This read did not create a card or start a worker. For a new task, submit workflow_board_deliver once to register this thread as orchestrator and wait in Design. Complete Design or wait for the user to start automation. For research or an explicit workflow opt-out, continue the requested work directly without board setup. Never submit completion evidence for an unassigned stage." };
+      instruction: "No Worktree Stage is assigned. This read did not create a card or start a worker. For a new task, submit treelanes_deliver once to register this thread as orchestrator and wait in Design. Complete Design or wait for the user to start automation. For research or an explicit workflow opt-out, continue the requested work directly without board setup. Never submit completion evidence for an unassigned stage." };
   }
 
   async function currentContext(threadId: string, snapshot = true) {
@@ -1682,7 +1682,7 @@ export default async function plugin(bb: BbPluginApi) {
       const target = await bb.sdk.threads.get({ threadId });
       const thread = (await listThreads(target.projectId)).find((row) => row.id === threadId);
       if (!thread || !isWorktreeThread(thread)) {
-        throw new Error("This thread is not on the Workflow Board.");
+        throw new Error("This thread is not on the board.");
       }
       if (thread.hasPendingInteraction || hasLiveWork(thread)) {
         throw new Error("This thread has live work or a pending question. Wait before settling it.");
@@ -1719,7 +1719,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.agents.registerTool({
-    name: "workflow_board_move_card",
+    name: "treelanes_move_card",
     description:
       "Assign the current Git worktree card to the stage that matches the work now being done. All threads in the worktree share the stage.",
     instructions:
@@ -1754,99 +1754,99 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.agents.registerTool({
-    name: "workflow_board_get_context",
+    name: "treelanes_get_context",
     description: "Read the saved task, owner, revisions and current file digest. A worktree without an assigned stage returns status unassigned without creating a card or starting work.",
     parameters: z.object({}),
     async execute(_input, context) { return JSON.stringify(await readContext(context.threadId)); },
   });
   bb.agents.registerTool({
-    name: "workflow_board_set_task",
+    name: "treelanes_set_task",
     description: "Save the existing authorized outcome, scope, accepted decisions, required checks, and allowed actions for this worktree. Reuse decisions while their scope still applies.",
     parameters: taskContextSchema,
     async execute(input, context) { return JSON.stringify(await saveTaskContext(context.threadId, input)); },
   });
   bb.agents.registerTool({
-    name: "workflow_board_complete_stage",
+    name: "treelanes_complete_stage",
     description: "Record actual check evidence from fresh context. Only recorded:true permits a completion marker and later dispatch. For an incomplete TDD, Quality or Simplify step, include nextAction for a concrete repair in this thread. See /delivery for receipt and recovery rules.",
     parameters: completionEvidenceSchema,
     async execute(input, context) { return JSON.stringify(await submitCompletion(context.threadId, input)); },
   });
 
   bb.agents.registerTool({
-    name: "workflow_board_start",
+    name: "treelanes_start",
     description: "Only when the user explicitly asks to start: open a saved automatic task from Design and continue planning in its original thread. Never use this to infer Design approval. For manual setups, start the saved current step once. Pauses and pending questions block dispatch.",
     parameters: z.object({}),
     async execute(_input, context) { return JSON.stringify(await startSavedSetup(context.threadId)); },
   });
   bb.agents.registerTool({
-    name: "workflow_board_catalog",
+    name: "treelanes_catalog",
     description: "Inspect installed harnesses, exact available models and effort levels, and relevant skills before choosing a task setup. Give providerId to read models and skillQuery to narrow skills.",
     parameters: z.object({ providerId: z.string().max(128).optional(), skillQuery: z.string().max(160).optional() }),
     async execute(input, context) { return JSON.stringify(await setupCatalog(context.threadId, input.providerId, input.skillQuery)); },
   });
   bb.agents.registerTool({
-    name: "workflow_board_playbooks",
+    name: "treelanes_playbooks",
     description: "Read recent checked setups in this project as starting points for a new task. Prior results never grant authority or validate new work.",
     parameters: z.object({}),
     async execute(_input, context) { return JSON.stringify(setupPlaybooks(context.projectId)); },
   });
 
-  bb.agents.registerTool({ name: "workflow_board_deliver", description: "Register the task once. New tasks wait in Design by default. This thread remains the orchestrator; after checked Design completion or explicit user Start it plans from live catalogs, then the board dispatches children. Do not start TDD from an unconfirmed design.",
+  bb.agents.registerTool({ name: "treelanes_deliver", description: "Register the task once. New tasks wait in Design by default. This thread remains the orchestrator; after checked Design completion or explicit user Start it plans from live catalogs, then the board dispatches children. Do not start TDD from an unconfirmed design.",
     parameters: automaticDeliverySchema,
     async execute(input, context) { return JSON.stringify(await deliverAutomatically(context.threadId, input)); },
   });
-  bb.agents.registerTool({ name: "workflow_board_apply_setup", description: "Assigned setup worker only: validate and save the setup proposal. The board retains the authorized task and dispatches after this worker is idle.",
+  bb.agents.registerTool({ name: "treelanes_apply_setup", description: "Assigned setup worker only: validate and save the setup proposal. The board retains the authorized task and dispatches after this worker is idle.",
     parameters: setupProposalSchema,
     async execute(input, context) { return JSON.stringify(await setupAutomation.apply(context.threadId, input.setup)); },
   });
-  bb.agents.registerTool({ name: "workflow_board_reopen", description: "Only at the user's request: reopen an idle PR Watch task in Design for changed work. Keep its history and original orchestrator; fresh checks are required. Read context and pass its taskRevision.",
+  bb.agents.registerTool({ name: "treelanes_reopen", description: "Only at the user's request: reopen an idle PR Watch task in Design for changed work. Keep its history and original orchestrator; fresh checks are required. Read context and pass its taskRevision.",
     parameters: reopenRequestSchema,
     async execute(input, context) { return JSON.stringify(await reopenTask(context.threadId, input)); },
   });
-  bb.agents.registerTool({ name: "workflow_board_recover", description: "Current worker only: request a bounded plan change after a technical failure. A recorded blocker requires nextAction with a concrete in-scope change. Do not retry unchanged base or external failures. Preserve scope and checks. End the turn; the setup worker replans after you are idle. Never use for pending human decisions.",
+  bb.agents.registerTool({ name: "treelanes_recover", description: "Current worker only: request a bounded plan change after a technical failure. A recorded blocker requires nextAction with a concrete in-scope change. Do not retry unchanged base or external failures. Preserve scope and checks. End the turn; the setup worker replans after you are idle. Never use for pending human decisions.",
     parameters: recoveryRequestSchema,
     async execute(input, context) { return JSON.stringify(await requestPlanRecovery(context.threadId, input.reason, input.nextAction)); },
   });
 
   // The setup worker gets only the skills its instructions name; board threads get every skill in skills/.
   bb.agents.configure(context => setupAutomation.isPlanner(context.thread.id, context.thread.title) ? {
-    tools: ["workflow_board_reopen", "workflow_board_apply_setup", "workflow_board_catalog", "workflow_board_get_context", "workflow_board_playbooks"], skills: ["delivery", "ponytail"],
+    tools: ["treelanes_reopen", "treelanes_apply_setup", "treelanes_catalog", "treelanes_get_context", "treelanes_playbooks"], skills: ["delivery", "ponytail"],
     instructions: "Use /delivery as the persistent task orchestrator. Follow the current assignment: submit setup or guide the existing child. The board owns dispatch and card moves; do not edit product code.",
   } : ({
-    tools: ["workflow_board_reopen", "workflow_board_move_card", "workflow_board_get_context", "workflow_board_set_task", "workflow_board_complete_stage", "workflow_board_start", "workflow_board_catalog", "workflow_board_playbooks", "workflow_board_deliver", "workflow_board_recover"],
+    tools: ["treelanes_reopen", "treelanes_move_card", "treelanes_get_context", "treelanes_set_task", "treelanes_complete_stage", "treelanes_start", "treelanes_catalog", "treelanes_playbooks", "treelanes_deliver", "treelanes_recover"],
     skills: [...PLUGIN_SKILLS],
     instructions:
-      "For Git Worktree delivery, use /delivery. Honor explicit workflow opt-outs. New tasks use workflow_board_deliver once; existing workers follow fresh board context. The board owns dispatch and card moves after checked receipts. Keep the Design Gate, saved authority and user stops. Use review for external /code-review and done only after a verified PR merge.",
+      "For Git Worktree delivery, use /delivery. Honor explicit workflow opt-outs. New tasks use treelanes_deliver once; existing workers follow fresh board context. The board owns dispatch and card moves after checked receipts. Keep the Design Gate, saved authority and user stops. Use review for external /code-review and done only after a verified PR merge.",
   }));
 
   const cliCommands = [
-      { name: "deliver", summary: "Plan and run an authorized task", usage: "bb workflow-board deliver '<json>'" },
-      { name: "apply-setup", summary: "Submit the assigned setup proposal", usage: "bb workflow-board apply-setup '<json>'" },
-      { name: "reopen", summary: "Reopen PR Watch in Design at the user's request", usage: `bb workflow-board reopen '{"taskRevision":2,"reason":"User requested changed work"}'` },
-      { name: "recover", summary: "Request bounded plan recovery", usage: `bb workflow-board recover '{"reason":"...","nextAction":"..."}'` },
-      { name: "start", summary: "Start the saved setup step once", usage: "bb workflow-board start" },
-      { name: "catalog", summary: "Read live setup choices", usage: "bb workflow-board catalog [provider-id] [skill-query]" },
-      { name: "playbooks", summary: "Read recent checked setups", usage: "bb workflow-board playbooks [project-id]" },
-      { name: "history", summary: "Read saved task revisions", usage: "bb workflow-board history" },
-      { name: "show", summary: "Show worktree stages", usage: "bb workflow-board show [project-id]" },
-      { name: "move", summary: "Move the worktree for a thread", usage: "bb workflow-board move <stage> [thread-id] [note]" },
-      { name: "snapshot", summary: "Read the current worktree file digest", usage: "bb workflow-board snapshot <environment-id>" },
-      { name: "context", summary: "Read saved task and current file revision", usage: "bb workflow-board context" },
-      { name: "task", summary: "Save the authorized work request", usage: "bb workflow-board task '<json>'" },
-      { name: "complete", summary: "Record checked stage completion", usage: "bb workflow-board complete '<json>'" },
-      { name: "health", summary: "Read pending and failed launches as JSON", usage: "bb workflow-board health [project-id]" },
-      { name: "reconcile", summary: "Recover eligible stage launches and check merged PRs", usage: "bb workflow-board reconcile [project-id]" },
-      { name: "pause", summary: "Pause automatic work for a worktree", usage: "bb workflow-board pause [environment-id]" },
-      { name: "resume", summary: "Resume automatic work for a worktree", usage: "bb workflow-board resume [environment-id]" },
-      { name: "stages", summary: "List valid stages", usage: "bb workflow-board stages" },
-      { name: "list-main", summary: "Show saved and preferred sidebar main threads and group order", usage: "bb workflow-board list-main" },
-      { name: "main", summary: "Choose a sidebar main thread", usage: "bb workflow-board main <project> <environment> <thread>" },
-      { name: "titles", summary: "Show automatic title choice, stored names and errors", usage: "bb workflow-board titles" },
-      { name: "generate-titles", summary: "Process one pending title batch", usage: "bb workflow-board generate-titles" },
+      { name: "deliver", summary: "Plan and run an authorized task", usage: "bb treelanes deliver '<json>'" },
+      { name: "apply-setup", summary: "Submit the assigned setup proposal", usage: "bb treelanes apply-setup '<json>'" },
+      { name: "reopen", summary: "Reopen PR Watch in Design at the user's request", usage: `bb treelanes reopen '{"taskRevision":2,"reason":"User requested changed work"}'` },
+      { name: "recover", summary: "Request bounded plan recovery", usage: `bb treelanes recover '{"reason":"...","nextAction":"..."}'` },
+      { name: "start", summary: "Start the saved setup step once", usage: "bb treelanes start" },
+      { name: "catalog", summary: "Read live setup choices", usage: "bb treelanes catalog [provider-id] [skill-query]" },
+      { name: "playbooks", summary: "Read recent checked setups", usage: "bb treelanes playbooks [project-id]" },
+      { name: "history", summary: "Read saved task revisions", usage: "bb treelanes history" },
+      { name: "show", summary: "Show worktree stages", usage: "bb treelanes show [project-id]" },
+      { name: "move", summary: "Move the worktree for a thread", usage: "bb treelanes move <stage> [thread-id] [note]" },
+      { name: "snapshot", summary: "Read the current worktree file digest", usage: "bb treelanes snapshot <environment-id>" },
+      { name: "context", summary: "Read saved task and current file revision", usage: "bb treelanes context" },
+      { name: "task", summary: "Save the authorized work request", usage: "bb treelanes task '<json>'" },
+      { name: "complete", summary: "Record checked stage completion", usage: "bb treelanes complete '<json>'" },
+      { name: "health", summary: "Read pending and failed launches as JSON", usage: "bb treelanes health [project-id]" },
+      { name: "reconcile", summary: "Recover eligible stage launches and check merged PRs", usage: "bb treelanes reconcile [project-id]" },
+      { name: "pause", summary: "Pause automatic work for a worktree", usage: "bb treelanes pause [environment-id]" },
+      { name: "resume", summary: "Resume automatic work for a worktree", usage: "bb treelanes resume [environment-id]" },
+      { name: "stages", summary: "List valid stages", usage: "bb treelanes stages" },
+      { name: "list-main", summary: "Show saved and preferred sidebar main threads and group order", usage: "bb treelanes list-main" },
+      { name: "main", summary: "Choose a sidebar main thread", usage: "bb treelanes main <project> <environment> <thread>" },
+      { name: "titles", summary: "Show automatic title choice, stored names and errors", usage: "bb treelanes titles" },
+      { name: "generate-titles", summary: "Process one pending title batch", usage: "bb treelanes generate-titles" },
     ];
-  const cliHelp = `Workflow Board commands:\n${cliCommands.map(command => `${command.usage}\n  ${command.summary}`).join("\n")}\n`;
+  const cliHelp = `Treelanes commands:\n${cliCommands.map(command => `${command.usage}\n  ${command.summary}`).join("\n")}\n`;
   bb.cli.register({
-    name: "workflow-board",
+    name: "treelanes",
     summary: "Read and move worktree cards",
     commands: cliCommands,
     async run(argv, context) {
@@ -1932,7 +1932,7 @@ export default async function plugin(bb: BbPluginApi) {
       }
       const sidebarResult = await sidebarState.cli(argv);
       if (sidebarResult) return sidebarResult;
-      return { exitCode: 2, stderr: `Unknown workflow-board command: ${command}\n${cliHelp}` };
+      return { exitCode: 2, stderr: `Unknown treelanes command: ${command}\n${cliHelp}` };
     },
   });
 
@@ -1970,5 +1970,5 @@ export default async function plugin(bb: BbPluginApi) {
   settings.onChange(() => {
     if (!disposed) void reconcileWorktrees().catch(error => bb.log.error(`Settings recovery failed: ${String(error)}`));
   });
-  bb.log.info("Workflow Board loaded");
+  bb.log.info("Treelanes loaded");
 }

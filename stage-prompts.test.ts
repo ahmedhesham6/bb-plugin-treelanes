@@ -12,7 +12,7 @@ describe("stage handoffs", () => {
     const prompt = buildStagePrompt({ ...assignment, stage, prompt: "Keep the accepted API." });
     expect(prompt).toContain("/delivery");
     expect(prompt).toContain(skill);
-    expect(prompt).toContain("workflow_board_get_context");
+    expect(prompt).toContain("treelanes_get_context");
     expect(prompt).toContain("execution.selectedSkills");
     expect(prompt).toContain("bb skill show");
     expect(prompt).toContain("Keep the accepted API.");

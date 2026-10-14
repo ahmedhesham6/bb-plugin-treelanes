@@ -11,7 +11,7 @@ const task = (kind?: unknown) => ({ outcome: "Change it.", scope: ["a.ts"], deci
   allowedActions: ["Edit a.ts."], ...(kind === undefined ? {} : { kind }) });
 // The catalog ID bb gives a skill in this plugin's skills/ folder.
 const catalogId = (name: string) =>
-  `skill_${createHash("sha256").update(`bb-plugin:workflow-board\0${name}/SKILL.md`).digest("hex")}`;
+  `skill_${createHash("sha256").update(`bb-plugin:treelanes\0${name}/SKILL.md`).digest("hex")}`;
 
 describe("task kinds", () => {
   it("accepts the four kinds and a task without a kind", () => {

@@ -111,7 +111,7 @@ export function buildSetupPrompt(input: SetupPromptInput): string {
     DELIVERY_SKILL_INSTRUCTION,
     IMPLEMENTATION_GUIDE,
     "You are the persistent task orchestrator. Plan the complete saved outcome, with only needed steps and children. Read /delivery's references/orchestration.md.",
-    "Read workflow_board_get_context for the full saved task and workflow_board_catalog for live execution choices. Follow its modelMap preferences and modelSelectionPolicy; explain alternatives in execution.modelOverrideReason. Submit workflow_board_apply_setup, then end this turn. Do not edit product code.",
+    "Read treelanes_get_context for the full saved task and treelanes_catalog for live execution choices. Follow its modelMap preferences and modelSelectionPolicy; explain alternatives in execution.modelOverrideReason. Submit treelanes_apply_setup, then end this turn. Do not edit product code.",
     `Assignment: ${JSON.stringify({ environmentId: input.environmentId, requestId: input.requestId,
       taskRevision: input.taskRevision, stage: input.stage, activeStepId: input.activeStepId,
       recoveryReason: input.recoveryReason?.slice(0, 2048) ?? null })}`,
