@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import type { SetupPlan, SetupStep } from "./setup-plan";
 
 export const TASK_KINDS = ["feature", "bug-fix", "refactor", "perf"] as const;
-export type TaskKind = (typeof TASK_KINDS)[number];
-
-export type TemplateStep = Pick<SetupStep, "id" | "stage" | "title" | "instructions" | "checks"> & { skills: string[] };
+type TaskKind = (typeof TASK_KINDS)[number];
+type KindTask = { kind?: TaskKind; deliveryTarget?: "pr" | "local" };
+type TemplateStep = Pick<SetupStep, "id" | "stage" | "title" | "instructions" | "checks"> & { skills: string[] };
 
 // bb's catalog ID for a skill in this plugin's skills/ folder. Names would
 // collide with provider copies of the same skill.
@@ -89,7 +89,7 @@ const templates: Record<TaskKind, TemplateStep[]> = {
 };
 
 /** Template Setup Steps for a task's kind, in order; none without a kind. */
-export function kindTemplate(task: { kind?: TaskKind; deliveryTarget?: "pr" | "local" }): TemplateStep[] {
+export function kindTemplate(task: KindTask): TemplateStep[] {
   if (!task.kind) return [];
   const steps = task.deliveryTarget === "pr" ? [...templates[task.kind], pr] : templates[task.kind];
   return steps.map(step => ({ ...step, checks: [...step.checks], skills: [...step.skills] }));
@@ -100,17 +100,17 @@ export function kindTemplate(task: { kind?: TaskKind; deliveryTarget?: "pr" | "l
  * or changes a template step's stage, checks, required skills or order.
  * Extra steps, checks and skills are allowed.
  */
-export function validateKindSteps(task: { kind?: TaskKind; deliveryTarget?: "pr" | "local" }, plan: SetupPlan): void {
+export function validateKindSteps(task: KindTask, plan: SetupPlan): void {
   const template = kindTemplate(task);
-  const ids = new Set(template.map(step => step.id));
-  for (const { stepId } of plan.skipped ?? []) {
-    if (!ids.has(stepId)) throw new Error(`Skipped step ${JSON.stringify(stepId)} is not a ${task.kind ?? "task kind"} template step.`);
+  const skipped = new Set(plan.skipped?.map(skip => skip.stepId));
+  for (const stepId of skipped) {
+    if (!template.some(step => step.id === stepId)) throw new Error(`Skipped step ${JSON.stringify(stepId)} is not a ${task.kind ?? "task kind"} template step.`);
   }
   let last = -1;
   for (const expected of template) {
     const index = plan.steps.findIndex(step => step.id === expected.id);
     if (index < 0) {
-      if (plan.skipped?.some(skip => skip.stepId === expected.id)) continue;
+      if (skipped.has(expected.id)) continue;
       throw new Error(`Keep template step ${JSON.stringify(expected.id)} or add it to skipped with a reason.`);
     }
     const step = plan.steps[index]!;
