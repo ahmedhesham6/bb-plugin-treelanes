@@ -16,6 +16,7 @@ import { createTddRepair, tddRepairMigration } from "./tdd-repair";
 import { buildStagePrompt, DEFAULT_STAGE_PROMPTS } from "./stage-prompts";
 import { setupProposalSchema } from "./setup-request";
 import { sidebar, sidebarMigrations } from "./sidebar/server";
+import { importMigration, importOldData } from "./import-data";
 import {
   DEFAULT_STAGE,
   STAGE_IDS,
@@ -429,6 +430,7 @@ export default async function plugin(bb: BbPluginApi) {
     tddRepairMigration,
     stageContinuationMigration,
     ...sidebarMigrations,
+    importMigration,
   ]);
   const sidebarState = sidebar(bb, db, {
     preferredMains: () => db.prepare("SELECT p.project_id AS projectId, r.environment_id AS environmentId, r.initiator_thread_id AS threadId FROM worktree_delivery_runs r JOIN worktree_setup_projects p ON p.environment_id = r.environment_id").all() as Array<{ projectId: string; environmentId: string; threadId: string }>,
@@ -1839,6 +1841,7 @@ export default async function plugin(bb: BbPluginApi) {
       { name: "pause", summary: "Pause automatic work for a worktree", usage: "bb treelanes pause [environment-id]" },
       { name: "resume", summary: "Resume automatic work for a worktree", usage: "bb treelanes resume [environment-id]" },
       { name: "stages", summary: "List valid stages", usage: "bb treelanes stages" },
+      { name: "import", summary: "Copy old workflow-board and worktree-sidebar data once into a new install", usage: "bb treelanes import" },
       { name: "list-main", summary: "Show saved and preferred sidebar main threads and group order", usage: "bb treelanes list-main" },
       { name: "main", summary: "Choose a sidebar main thread", usage: "bb treelanes main <project> <environment> <thread>" },
       { name: "titles", summary: "Show automatic title choice, stored names and errors", usage: "bb treelanes titles" },
@@ -1863,6 +1866,11 @@ export default async function plugin(bb: BbPluginApi) {
             const input = recoveryRequestSchema.parse(text.trimStart().startsWith("{") ? JSON.parse(text) : { reason: text });
             return requestPlanRecovery(threadId, input.reason, input.nextAction);
           })();
+        return { exitCode: 0, stdout: `${JSON.stringify(result)}\n` };
+      }
+      if (command === "import") {
+        const result = importOldData(db, bb.server.experimental_dataDir);
+        for (const channel of ["board-changed", "lifecycle", "order", "groups", "titles"]) bb.realtime.publish(channel, {});
         return { exitCode: 0, stdout: `${JSON.stringify(result)}\n` };
       }
       if (command === "playbooks") return { exitCode: 0, stdout: `${JSON.stringify(setupPlaybooks(args[0] ?? context.projectId))}\n` };
