@@ -89,7 +89,7 @@ export function TaskMapSettings() {
       {map.kinds.map(kind => (
         <section key={kind.kind}>
           <h3 className="text-sm font-semibold capitalize text-foreground">{kind.kind.replace("-", " ")}</h3>
-          {kind.steps.map(step => row(step.slot, `${stageLabel(step.stage as StageId)}: ${step.title}`,
+          {kind.steps.map(step => row(step.slot, step.title === stageLabel(step.stage as StageId) ? step.title : `${stageLabel(step.stage as StageId)}: ${step.title}`,
             [step.prOnly ? "Only when the target is a pull request." : "", step.checks.length ? `Checks: ${step.checks.join(" ")}` : "",
               `Skills: ${step.skills.join(", ")}`].filter(Boolean).join(" ")))}
         </section>
