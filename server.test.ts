@@ -4,7 +4,7 @@ import {
   makeThreadResponse,
 } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
-import { makeWorkspaceSdk } from "./test-workspace";
+import { makeWorkspaceSdk, shippedSkills } from "./test-workspace";
 import { automatedNextStage, reportsFinishedGrilling } from "./workflow";
 
 function worktreeThread(
@@ -226,7 +226,7 @@ describe("Workflow Board backend", () => {
         environmentId: "environment-one",
       },
       prompt: expect.stringContaining(
-        "/tdd Implement the saved step through the accepted test interfaces.",
+        "Use the tdd skill.\nImplement the saved step through the accepted test interfaces.",
       ),
     });
 
@@ -288,7 +288,7 @@ describe("Workflow Board backend", () => {
       model: "gpt-5.6-sol",
       environment: { type: "reuse", environmentId: "environment-one" },
       prompt: expect.stringContaining(
-        "/thermo-nuclear-code-quality-review Review the task diff and fix valid findings within scope.",
+        "Use the thermo-nuclear-code-quality-review skill.\nReview the task diff and fix valid findings within scope.",
       ),
     });
     await harness.lifecycle.dispose();
@@ -362,7 +362,7 @@ describe("Workflow Board backend", () => {
       model: "claude-fable-5-1",
       environment: { type: "reuse", environmentId: "environment-one" },
       prompt: expect.stringContaining(
-        "/simplify Reduce needless code in the task diff and preserve behavior.",
+        "Use the simplify skill.\nReduce needless code in the task diff and preserve behavior.",
       ),
     });
     await harness.lifecycle.dispose();
@@ -928,7 +928,7 @@ describe("Workflow Board backend", () => {
       model: "gpt-5.6-sol",
       environment: { type: "reuse", environmentId: "environment-one" },
       prompt: expect.stringContaining(
-        "/thermo-nuclear-code-quality-review Review the task diff and fix valid findings within scope.",
+        "Use the thermo-nuclear-code-quality-review skill.\nReview the task diff and fix valid findings within scope.",
       ),
     });
 
@@ -1064,6 +1064,7 @@ describe("Workflow Board backend", () => {
   it("maps /code-review to Code Review in agent instructions", async () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "workflow-board",
+      agentSkillIds: shippedSkills,
     });
     await plugin(bb);
 

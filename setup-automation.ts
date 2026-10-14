@@ -188,7 +188,7 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
     };
     const context = fresh(job);
     const prompt = buildSetupPrompt({ environmentId: env, requestId: job.id, taskRevision: context.taskRevision,
-      stage: context.stage, activeStepId: context.activeStepId, recoveryReason: job.reason });
+      stage: context.stage, activeStepId: context.activeStepId, recoveryReason: job.reason, task: context.task! });
     fresh(job);
     if (hooks.disposed()) return;
     const claim = db.prepare("UPDATE worktree_setup_requests SET status = 'starting', attempts = attempts + 1, updated_at = ?, prepared_json = ? WHERE id = ? AND status = 'pending' AND attempts = ?")

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
-import { makeWorkspaceSdk } from "./test-workspace";
+import { kindTemplate } from "./task-kinds";
+import { makeWorkspaceSdk, shippedSkills } from "./test-workspace";
 import type { ProviderInfo, ThreadEventRow } from "@get-bb/plugin-sdk";
 
 const disposals: Array<() => Promise<void>> = [];
@@ -21,7 +22,7 @@ async function setup(assigned = true, settings: Record<string, string | boolean>
   const failedRequests = new Map<string, string>();
   const requests: Array<{ prompt?: string; providerId?: string; model?: string; reasoningLevel?: string }> = [];
   const { bb, harness } = createFakePluginHost({
-    pluginId: "workflow-board",
+    pluginId: "workflow-board", agentSkillIds: shippedSkills,
     settings: { startInDesign: false, useInitiatingThread: false, ...settings },
     sdk: {
       providers: {
@@ -314,6 +315,16 @@ describe("saved stage evidence", () => {
     expect((await t.context()).execution.reason).toBe(reason);
   });
 
+  it("rejects a saved setup that breaks the kind template", async () => {
+    const t = await setup();
+    const [build, quality] = kindTemplate({ kind: "feature" }).map(({ skills, ...step }) =>
+      ({ ...step, execution: { providerId: "codex", model: "small", reasoningLevel: "low", skills, reason: "Fits." } }));
+    const save = (setup: object) => t.harness.behavior.callAgentTool("workflow_board_set_task", { ...t.task, kind: "feature", setup }, t.agent);
+    await expect(save({ summary: "Build and review", steps: [build, quality] })).rejects.toThrow(/simplify/);
+    await save({ summary: "Build and review", steps: [build, quality], skipped: [{ stepId: "simplify", reason: "One-line change." }] });
+    expect((await t.context()).task.setup.skipped).toEqual([{ stepId: "simplify", reason: "One-line change." }]);
+  });
+
   it("keeps a stage worker visible when its task parent is hidden", async () => {
     const t = await setup();
     t.root.visibility = "hidden";
@@ -354,6 +365,21 @@ describe("saved stage evidence", () => {
     expect(context.workspaceDigest).toBeUndefined();
     expect(context.automaticSetup.thread_id).toBe(planner.threadId);
     await expect(t.context()).rejects.toThrow(/502|unavailable/);
+  });
+
+  it("loads plugin skills for board threads but not for the setup worker", async () => {
+    const t = await setup(false);
+    await t.harness.behavior.callAgentTool("workflow_board_deliver", { stage: "tdd", task: t.task }, t.agent);
+    const configure = (thread: typeof t.root) => t.harness.behavior.resolveAgentConfiguration({
+      thread: { id: thread.id, title: thread.title, parentThreadId: thread.parentThreadId, sourceThreadId: null },
+      project: { id: "project", kind: "standard", name: "Project", gitRemoteUrl: null },
+      environment: { id: "env", name: "test", path: "/srv/worktree", workspaceProvisionType: "managed-worktree", branchName: "feat/test" },
+      host: { id: "host", name: "Host" }, provider: { id: "codex", model: "small" }, origin: { kind: null, pluginId: null },
+    });
+    expect((await configure(t.threads[1]!)).skills).toEqual([]);
+    const board = await configure(t.root);
+    expect(board.tools.length).toBeGreaterThan(0);
+    expect(board.skills).toEqual(shippedSkills);
   });
 
   it("automatically reaches PR Watch after TDD, Quality and Simplify, and keeps PR when the plan changes", async () => {

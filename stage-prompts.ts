@@ -5,15 +5,15 @@ export const DELIVERY_SKILL_INSTRUCTION = "Use /delivery. Read its current files
 export const IMPLEMENTATION_GUIDE = "Use /ponytail with the stage skill (full unless changed or stopped). Read what this task needs; deliver the smallest correct change through its required checks.";
 
 export const DEFAULT_STAGE_PROMPTS = {
-  tdd: "/tdd Implement the saved step through the accepted test interfaces.",
-  quality: "/thermo-nuclear-code-quality-review Review the task diff and fix valid findings within scope.",
-  simplify: "/simplify Reduce needless code in the task diff and preserve behavior.",
+  tdd: "Implement the saved step through the accepted test interfaces.",
+  quality: "Review the task diff and fix valid findings within scope.",
+  simplify: "Reduce needless code in the task diff and preserve behavior.",
   pr: "/babysit-pr Push the task PR and fixes. Monitor checks and comments; repeat until required checks are green and actionable threads are resolved. Leave merge to the user.",
 } as const;
 
 const STAGE_SKILLS: Partial<Record<StageId, string>> = {
-  design: "/grilling", tdd: "/tdd", quality: "/thermo-nuclear-code-quality-review",
-  simplify: "/simplify", pr: "/babysit-pr", review: "/code-review",
+  design: "/grilling", tdd: "the tdd skill", quality: "the thermo-nuclear-code-quality-review skill",
+  simplify: "the simplify skill", pr: "/babysit-pr", review: "/code-review",
 };
 const OLD_PR_STOP_INSTRUCTION = "If a required check cannot pass, stop and report the blocker without opening a pull request.";
 const TDD_STEP_INSTRUCTION = "TDD: Reuse coverage; add tests for distinct behavior or likely regressions. Wording-only or low-impact edits need existing checks, not new tests. Avoid prompt/skill string checks and snapshots. Review the full diff, including uncommitted work. If tests/fixtures exceed 50% of changed lines, trim low-value cases and explain retained coverage; keep real-risk tests. Run required checks. Add no report file.";

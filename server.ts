@@ -8,6 +8,7 @@ import { captureWorkspace, completionEvidenceSchema, taskContextSchema } from ".
 import { nextDeliveryStage, requiredStageChecks } from "./delivery-plan";
 import { activeSetupStep, nextSetupStep, normalizeLegacyDeliveryStages, preserveCompletedSteps, requirePrWatch, validateSetupRevision } from "./setup-plan";
 import { resolveStepExecution } from "./step-execution";
+import { validateKindSteps } from "./task-kinds";
 import { createSetupAutomation, setupAutomationMigration } from "./setup-automation";
 import { createThreadRetry, threadRetryMigration } from "./thread-retry";
 import { createStageContinuation, stageContinuationMigration } from "./stage-continuation";
@@ -25,6 +26,10 @@ import {
 } from "./workflow";
 
 const stageSchema = z.enum(STAGE_IDS);
+const PLUGIN_SKILLS = ["babysit-pr", "benchmark-checklist", "code-review", "codebase-design", "delivery", "diagnosing-bugs", "grilling", "ponytail",
+  "principle-fix-root-causes", "principle-migrate-callers-then-delete-legacy-apis", "principle-minimize-reader-load", "principle-model-the-domain",
+  "principle-sequence-verifiable-units", "principle-subtract-before-you-add", "principle-test-behavior-not-implementation", "show-me", "simplify", "tdd",
+  "thermo-nuclear-code-quality-review"] as const;
 const threadStatusSchema = z.enum([
   "error",
   "pending",
@@ -1074,6 +1079,7 @@ export default async function plugin(bb: BbPluginApi) {
     const prepared = db.prepare("SELECT execution_json FROM worktree_stage_thread_launches WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
       .get(context.environmentId, state.stage, state.updated_at) as { execution_json: string | null } | undefined;
     task.setup = preserveCompletedSteps(current.task?.setup, task.setup, state.active_step_id);
+    if (task.setup) validateKindSteps(task, task.setup);
     validateSetupRevision(current.task?.setup, task.setup, state.active_step_id, state.stage, Boolean(prepared?.execution_json || (launch && ["started", "starting"].includes(launch.status))));
     const correctedSelection = launch && ["failed", "blocked"].includes(launch.status) && !prepared?.execution_json &&
       JSON.stringify(activeSetupStep(current.task?.setup, state.active_step_id)?.execution) !== JSON.stringify(activeSetupStep(task.setup, state.active_step_id)?.execution);
@@ -1831,12 +1837,13 @@ export default async function plugin(bb: BbPluginApi) {
     async execute(input, context) { return JSON.stringify(await requestPlanRecovery(context.threadId, input.reason, input.nextAction)); },
   });
 
+  // The setup worker gets no plugin skills; board threads get every skill in skills/.
   bb.agents.configure(context => setupAutomation.isPlanner(context.thread.id, context.thread.title) ? {
     tools: ["workflow_board_reopen", "workflow_board_apply_setup", "workflow_board_catalog", "workflow_board_get_context", "workflow_board_playbooks"], skills: [],
     instructions: "Use /delivery as the persistent task orchestrator. Follow the current assignment: submit setup or guide the existing child. The board owns dispatch and card moves; do not edit product code.",
   } : ({
     tools: ["workflow_board_reopen", "workflow_board_move_card", "workflow_board_get_context", "workflow_board_set_task", "workflow_board_complete_stage", "workflow_board_start", "workflow_board_catalog", "workflow_board_playbooks", "workflow_board_deliver", "workflow_board_recover"],
-    skills: [],
+    skills: [...PLUGIN_SKILLS],
     instructions:
       "For Git Worktree delivery, use /delivery. Honor explicit workflow opt-outs. New tasks use workflow_board_deliver once; existing workers follow fresh board context. The board owns dispatch and card moves after checked receipts. Keep the Design Gate, saved authority and user stops. Use review for external /code-review and done only after a verified PR merge.",
   }));

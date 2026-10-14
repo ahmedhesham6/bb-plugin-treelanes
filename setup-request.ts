@@ -4,6 +4,7 @@ import { requiredStageChecks } from "./delivery-plan";
 import { normalizeLegacyDeliveryStages, requirePrWatch, setupPlanSchema, type SetupPlan, type SetupStep } from "./setup-plan";
 import type { TaskContext } from "./stage-evidence";
 import { DELIVERY_SKILL_INSTRUCTION, IMPLEMENTATION_GUIDE } from "./stage-prompts";
+import { kindTemplate, validateKindSteps } from "./task-kinds";
 
 const operationalStages = new Set(["tdd", "quality", "simplify", "pr"]);
 export const setupProposalSchema = z
@@ -53,6 +54,7 @@ export function validateSetupProposal(
   const parsed = setupPlanSchema.parse(proposed);
   normalizeLegacyDeliveryStages({ ...previous, setup: parsed });
   requirePrWatch({ ...previous, setup: parsed });
+  validateKindSteps(previous, parsed);
   for (const step of parsed.steps) assertCheckBudget(step, previous);
 
   if (!recovery) {
@@ -100,9 +102,11 @@ type SetupPromptInput = {
   stage: string;
   activeStepId: string | null;
   recoveryReason: string | null;
+  task?: Pick<TaskContext, "kind" | "deliveryTarget">;
 };
 
 export function buildSetupPrompt(input: SetupPromptInput): string {
+  const template = kindTemplate(input.task ?? {});
   return [
     DELIVERY_SKILL_INSTRUCTION,
     IMPLEMENTATION_GUIDE,
@@ -111,5 +115,6 @@ export function buildSetupPrompt(input: SetupPromptInput): string {
     `Assignment: ${JSON.stringify({ environmentId: input.environmentId, requestId: input.requestId,
       taskRevision: input.taskRevision, stage: input.stage, activeStepId: input.activeStepId,
       recoveryReason: input.recoveryReason?.slice(0, 2048) ?? null })}`,
+    ...(template.length ? [`Task kind ${input.task!.kind}: copy these template steps in order with the same id, stage and checks, and put their skills in execution.skills. You may edit title and instructions and add steps, checks and skills. Template: ${JSON.stringify(template)}`] : []),
   ].join("\n");
 }
