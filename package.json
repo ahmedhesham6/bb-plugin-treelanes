@@ -1,6 +1,7 @@
 {
-  "name": "bb-plugin-workflow-board",
+  "name": "bb-plugin-treelanes",
   "version": "0.1.0",
+  "description": "Git worktree board and sidebar: track each worktree through design, build, review and merge.",
   "type": "module",
   "scripts": {
     "build": "bb plugin build",
@@ -8,18 +9,20 @@
     "typecheck": "tsc --noEmit"
   },
   "engines": {
-    "bb": ">=0.38",
-    "bbPluginSdk": ">=0.4.6"
+    "bb": ">=0.41",
+    "bbPluginSdk": ">=0.4.34"
   },
   "bb": {
-    "name": "Workflow Board",
-    "description": "Track Git worktrees and their unsettled threads through design, build, review, and merge.",
+    "name": "Treelanes",
+    "description": "Track Git worktrees and their threads through design, build, review, and merge, with a worktree sidebar.",
     "branding": {
-      "icon": "Columns"
+      "icon": "Columns2"
     },
     "server": "./server.ts",
     "app": "./app.tsx",
-    "skills": ["skills"]
+    "skills": [
+      "skills"
+    ]
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.1.3",

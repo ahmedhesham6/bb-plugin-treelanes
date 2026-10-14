@@ -26,6 +26,9 @@ import { Button } from "./components/ui/button";
 import { Icon } from "./components/ui/icon";
 import { Input } from "./components/ui/input";
 import { cn } from "./lib/utils";
+import { ThreadInbox } from "./sidebar/ThreadInbox";
+import { ParentChip } from "./sidebar/ParentChip";
+import { SubagentsChip } from "./sidebar/SubagentsChip";
 
 type Card = BoardResult["cards"][number];
 type Stage = BoardResult["stages"][number];
@@ -1393,5 +1396,21 @@ export default definePluginApp((app) => {
     icon: "Columns",
     path: "board",
     component: WorkflowBoard,
+  });
+  app.slots.experimental_threadList({
+    id: "inbox",
+    title: "Worktree Sidebar",
+    description: "One main thread per worktree. Children follow selection.",
+    component: ThreadInbox,
+  });
+  app.slots.experimental_threadHeaderAction({
+    id: "parent",
+    title: "Parent thread",
+    component: ParentChip,
+  });
+  app.slots.experimental_threadHeaderAction({
+    id: "children",
+    title: "Child threads",
+    component: SubagentsChip,
   });
 });

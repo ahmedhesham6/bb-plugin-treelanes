@@ -21,6 +21,7 @@ function worktreeThread(
     environmentName: values.environmentName ?? "board-worktree",
     environmentBranchName: values.environmentBranchName ?? "feat/board",
     environmentWorkspaceDisplayKind: "managed-worktree" as const,
+    activity: { activeWorkflowCount: 0, activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 0, activePlanModeCount: 0, activeGoalCount: 0 },
   };
 }
 
@@ -1268,24 +1269,14 @@ describe("Workflow Board backend", () => {
         parentThreadId: null,
         environmentId: "environment-two",
       }),
-      latestAttentionAt: 300,
+      latestAttentionAt: 100,
     };
     const sdk = sdkFor([settled, activeAgain]);
-    const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
-      sdk: {
-        ...sdk,
-        plugins: {
-          callRpc: async () => ({
-            rows: [
-              { threadId: settled.id, settledAt: 200, snoozedUntil: null, snoozedAt: null },
-              { threadId: activeAgain.id, settledAt: 200, snoozedUntil: null, snoozedAt: null },
-            ],
-          }),
-        },
-      },
-    });
+    const { bb, harness } = createFakePluginHost({ pluginId: "treelanes", sdk });
     await plugin(bb);
+    await harness.behavior.callRpc("settleThread", { threadId: settled.id });
+    await harness.behavior.callRpc("settleThread", { threadId: activeAgain.id });
+    activeAgain.latestAttentionAt = Date.now() + 60_000;
     const board = (await harness.behavior.callRpc("getBoard", {
       projectId: "project-one",
     })) as { cards: Array<{ environmentId: string; threads: Array<{ id: string }> }> };
@@ -1295,25 +1286,12 @@ describe("Workflow Board backend", () => {
     await harness.lifecycle.dispose();
   });
 
-  it.each(["t3sidebar", "worktree-sidebar"])("settles only the chosen thread through %s and removes the last settled Worktree Card", async (provider) => {
+  it("settles only the chosen thread and removes the last settled Worktree Card", async () => {
     const threads = ["root", "child"].map((id) => worktreeThread({
       id, projectId: "project-one", status: "idle", updatedAt: 1,
       parentThreadId: id === "child" ? "root" : null,
     }));
-    const rows: Array<{ threadId: string; settledAt: number; snoozedUntil: null; snoozedAt: null }> = [];
-    const { bb, harness } = createFakePluginHost({
-      pluginId: "workflow-board",
-      settings: { lifecycleProvider: provider },
-      sdk: { ...sdkFor(threads), plugins: {
-        callRpc: async ({ pluginId, method, input }) => {
-          expect(pluginId).toBe(provider);
-          if (method === "listLifecycle") return { rows };
-          expect(method).toBe("settle");
-          rows.push({ threadId: (input as { threadId: string }).threadId, settledAt: Date.now(), snoozedUntil: null, snoozedAt: null });
-          return { ok: true };
-        },
-      } },
-    });
+    const { bb, harness } = createFakePluginHost({ pluginId: "treelanes", sdk: sdkFor(threads) });
     await plugin(bb);
     try {
       await expect(harness.behavior.callRpc("settleThread", { threadId: "child" })).resolves.toEqual({ ok: true });
@@ -1325,7 +1303,7 @@ describe("Workflow Board backend", () => {
     } finally { await harness.lifecycle.dispose(); }
   });
 
-  it.each(["active", "question", "background", "outside", "unavailable"])("does not hide a thread when settling is blocked: %s", async (reason) => {
+  it.each(["active", "question", "background", "outside"])("does not hide a thread when settling is blocked: %s", async (reason) => {
     const thread = {
       ...worktreeThread({ id: "thread-one", projectId: "project-one", status: reason === "active" ? "active" : "idle" }),
       hasPendingInteraction: reason === "question",
@@ -1335,16 +1313,14 @@ describe("Workflow Board backend", () => {
     const sdk = sdkFor([]);
     const { bb, harness } = createFakePluginHost({
       pluginId: "workflow-board",
-      sdk: { ...sdk, threads: { ...sdk.threads, get: async () => thread, list: async () => [thread] }, plugins: {
-        callRpc: async () => { throw new Error("T3 Sidebar unavailable"); },
-      } },
+      sdk: { ...sdk, threads: { ...sdk.threads, get: async () => thread, list: async () => [thread] } },
     });
     await plugin(bb);
     try {
       await expect(harness.behavior.callRpc("settleThread", { threadId: thread.id })).rejects.toThrow(
-        reason === "unavailable" ? "T3 Sidebar unavailable" : reason === "outside" ? "not on the Workflow Board" : "live work or a pending question",
+        reason === "outside" ? "not on the Workflow Board" : "live work or a pending question",
       );
-      expect(harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(reason === "unavailable" ? 1 : 0);
+      expect(await harness.behavior.callRpc("listLifecycle", {})).toEqual({ rows: [] });
       expect(harness.realtimeSignals).toHaveLength(0);
     } finally { await harness.lifecycle.dispose(); }
   });

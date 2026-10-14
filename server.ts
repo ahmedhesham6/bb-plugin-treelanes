@@ -15,6 +15,7 @@ import { createStageContinuation, stageContinuationMigration } from "./stage-con
 import { createTddRepair, tddRepairMigration } from "./tdd-repair";
 import { buildStagePrompt, DEFAULT_STAGE_PROMPTS } from "./stage-prompts";
 import { setupProposalSchema } from "./setup-request";
+import { sidebar, sidebarMigrations } from "./sidebar/server";
 import {
   DEFAULT_STAGE,
   STAGE_IDS,
@@ -38,17 +39,6 @@ const threadStatusSchema = z.enum([
   "starting",
   "active",
 ]);
-
-const sidebarLifecycleOutputSchema = z.object({
-  rows: z.array(
-    z.object({
-      threadId: z.string(),
-      settledAt: z.number().nullable(),
-      snoozedUntil: z.number().nullable(),
-      snoozedAt: z.number().nullable(),
-    }),
-  ),
-});
 
 const workThreadSchema = z.object({
   id: z.string(),
@@ -121,7 +111,6 @@ export type BoardResult = z.infer<typeof boardOutputSchema>;
 export type ComposerDefaultsResult = z.infer<typeof composerDefaultsOutputSchema>;
 
 export const rpcContract = defineRpcContract({
-  listMainThreads: { input: z.object({}).strict(), output: z.object({ rows: z.array(z.object({ projectId: z.string(), environmentId: z.string(), threadId: z.string() })) }) },
   getBoard: {
     input: z.object({ projectId: z.string().nullable() }).strict(),
     output: boardOutputSchema,
@@ -252,7 +241,6 @@ function isWorktreeThread(thread: ThreadRow): boolean {
 
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
-    lifecycleProvider: { type: "select", label: "Sidebar lifecycle provider", options: ["t3sidebar", "worktree-sidebar"], default: "t3sidebar" },
     startInDesign: { type: "boolean", label: "Wait in Design before automatic delivery", default: true },
     useInitiatingThread: { type: "boolean", label: "Use the initiating thread as orchestrator", default: true },
     orchestratorProviderId: { type: "string", label: "Preferred orchestrator provider", default: "" },
@@ -440,7 +428,12 @@ export default async function plugin(bb: BbPluginApi) {
     threadRetryMigration,
     tddRepairMigration,
     stageContinuationMigration,
+    ...sidebarMigrations,
   ]);
+  const sidebarState = sidebar(bb, db, {
+    preferredMains: () => db.prepare("SELECT p.project_id AS projectId, r.environment_id AS environmentId, r.initiator_thread_id AS threadId FROM worktree_delivery_runs r JOIN worktree_setup_projects p ON p.environment_id = r.environment_id").all() as Array<{ projectId: string; environmentId: string; threadId: string }>,
+    titleChoice: () => null,
+  });
 
   const readWorktreeState = db.prepare(
     "SELECT environment_id, stage, note, updated_at, owner_thread_id, active_step_id FROM worktree_cards WHERE environment_id = ?",
@@ -608,22 +601,6 @@ export default async function plugin(bb: BbPluginApi) {
       thread = await bb.sdk.threads.get({ threadId: thread.parentThreadId });
     }
     return readLegacyState.get(thread.id) as LegacyCardStateRow | undefined;
-  }
-
-  async function readSidebarLifecycle() {
-    try {
-      return await bb.sdk.plugins.callRpc({
-        pluginId: (await settings.get()).lifecycleProvider,
-        method: "listLifecycle",
-        input: {},
-        outputSchema: sidebarLifecycleOutputSchema,
-      });
-    } catch (error) {
-      bb.log.debug(
-        `Could not read sidebar lifecycle: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return { rows: [] };
-    }
   }
 
   async function startStageThread(
@@ -1568,7 +1545,7 @@ export default async function plugin(bb: BbPluginApi) {
     const [threads, projects, lifecycle] = await Promise.all([
       listThreads(projectId ?? undefined),
       bb.sdk.projects.list({ includePersonal: true }),
-      readSidebarLifecycle(),
+      sidebarState.lifecycle(),
     ]);
     const projectNames = new Map(
       projects.map((project) => [project.id, project.name]),
@@ -1587,7 +1564,7 @@ export default async function plugin(bb: BbPluginApi) {
     );
     const threadById = new Map(threads.map((thread) => [thread.id, thread]));
     const settledAtByThread = new Map(
-      lifecycle.rows.flatMap((row) =>
+      lifecycle.flatMap((row) =>
         row.settledAt === null ? [] : [[row.threadId, row.settledAt] as const],
       ),
     );
@@ -1694,7 +1671,6 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   bb.rpc.register(rpcContract, {
-    listMainThreads: async () => ({ rows: db.prepare("SELECT p.project_id AS projectId, r.environment_id AS environmentId, r.initiator_thread_id AS threadId FROM worktree_delivery_runs r JOIN worktree_setup_projects p ON p.environment_id = r.environment_id").all() as Array<{projectId:string;environmentId:string;threadId:string}> }),
     getBoard: ({ projectId }) => getBoard(projectId),
     moveCard: ({ environmentId, stage, note }) =>
       moveWorktree(environmentId, stage, note, "panel"),
@@ -1711,14 +1687,9 @@ export default async function plugin(bb: BbPluginApi) {
       if (thread.hasPendingInteraction || hasLiveWork(thread)) {
         throw new Error("This thread has live work or a pending question. Wait before settling it.");
       }
-      const result = await bb.sdk.plugins.callRpc({
-        pluginId: (await settings.get()).lifecycleProvider,
-        method: "settle",
-        input: { threadId },
-        outputSchema: z.object({ ok: z.literal(true) }),
-      });
+      await sidebarState.settle({ threadId });
       bb.realtime.publish("board-changed", { environmentId: thread.environmentId });
-      return result;
+      return { ok: true as const };
     },
     getComposerDefaults: async ({ threadId }) => {
       const [thread, execution] = await Promise.all([
@@ -1868,6 +1839,10 @@ export default async function plugin(bb: BbPluginApi) {
       { name: "pause", summary: "Pause automatic work for a worktree", usage: "bb workflow-board pause [environment-id]" },
       { name: "resume", summary: "Resume automatic work for a worktree", usage: "bb workflow-board resume [environment-id]" },
       { name: "stages", summary: "List valid stages", usage: "bb workflow-board stages" },
+      { name: "list-main", summary: "Show saved and preferred sidebar main threads and group order", usage: "bb workflow-board list-main" },
+      { name: "main", summary: "Choose a sidebar main thread", usage: "bb workflow-board main <project> <environment> <thread>" },
+      { name: "titles", summary: "Show automatic title choice, stored names and errors", usage: "bb workflow-board titles" },
+      { name: "generate-titles", summary: "Process one pending title batch", usage: "bb workflow-board generate-titles" },
     ];
   const cliHelp = `Workflow Board commands:\n${cliCommands.map(command => `${command.usage}\n  ${command.summary}`).join("\n")}\n`;
   bb.cli.register({
@@ -1955,6 +1930,8 @@ export default async function plugin(bb: BbPluginApi) {
         if (result.blockedReason) return { exitCode: 2, stderr: `${result.blockedReason}\n` };
         return { exitCode: 0, stdout: `Moved ${result.worktreeName} to ${stageLabel(stageArg)}.\n` };
       }
+      const sidebarResult = await sidebarState.cli(argv);
+      if (sidebarResult) return sidebarResult;
       return { exitCode: 2, stderr: `Unknown workflow-board command: ${command}\n${cliHelp}` };
     },
   });
