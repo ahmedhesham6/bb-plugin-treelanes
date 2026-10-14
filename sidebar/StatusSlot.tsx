@@ -3,16 +3,6 @@ import { StatusGlyph, hasStatusGlyph } from "./StatusGlyph";
 import { relativeTimeLabel } from "./relative-time";
 
 /**
- * The row's trailing slot: one fixed width, right-aligned, on every row.
- *
- * Fixed rather than intrinsic because the age label's width follows its text —
- * "now" is wider than "7m" — and an intrinsic slot drags whatever sits beside
- * it back and forth, so no two rows agree on a column. The width holds the
- * widest label this sidebar can produce ("now", "59m", "52w").
- */
-export const STATUS_SLOT_CLASS = "flex w-7 shrink-0 items-center justify-end";
-
-/**
  * The box every trailing glyph sits in, whatever its artwork measures.
  *
  * The status glyph, the provider glyph and a shelf's chevron all end a line at

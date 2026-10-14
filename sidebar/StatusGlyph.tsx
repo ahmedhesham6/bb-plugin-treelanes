@@ -1,5 +1,5 @@
 import type { PluginSidebarThreadIndicator } from "@get-bb/plugin-sdk";
-import { Icon } from "./components/Icon";
+import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 
 /** Keep unknown host indicators compatible with the age fallback. */

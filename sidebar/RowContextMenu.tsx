@@ -5,7 +5,7 @@ import {
   experimental_useSidebarThreadActions as useActions,
   type PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
-import { Icon } from "./components/Icon";
+import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 
 interface Props {
@@ -113,7 +113,7 @@ export function RowMenuButton(props: Props) {
           title="Thread actions"
           className="pointer-events-auto grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11"
         >
-          <Icon name="More" aria-hidden="true" className="size-4" />
+          <Icon name="MoreHorizontal" aria-hidden="true" className="size-4" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>

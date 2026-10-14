@@ -3,7 +3,7 @@ import {
   experimental_useSidebarThreadActions as useSidebarThreadActions,
   type PluginThreadHeaderActionProps,
 } from "@get-bb/plugin-sdk/app";
-import { Icon } from "./components/Icon";
+import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import { Disc } from "./Disc";
 import { parentOf, threadDisplayTitle } from "./inbox";

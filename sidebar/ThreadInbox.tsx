@@ -6,7 +6,7 @@ import {
   type PluginThreadListProps,
 } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import { Icon } from "./components/Icon";
+import { Icon } from "../components/ui/icon";
 import {
   Select,
   SelectContent,
