@@ -34,24 +34,6 @@ bb plugin install .
 A new install starts empty. Threads appear on the board when they are in a
 Git worktree and are not settled.
 
-## Move from workflow-board and worktree-sidebar
-
-Treelanes replaces the earlier `workflow-board` and `worktree-sidebar` plugins.
-To keep their data:
-
-1. Install Treelanes. Do not use it yet.
-2. Run `bb treelanes import`. It copies board cards, tasks, receipts, launch
-   records, Settled and Snoozed state, thread order, main threads, and
-   display titles in one transaction.
-3. Disable the old plugins: `bb plugin disable workflow-board` and
-   `bb plugin disable worktree-sidebar`.
-4. Choose Treelanes as the sidebar.
-
-The import reads the old plugin databases and does not change them. It refuses
-a Treelanes install that already has data, and a second run does nothing.
-Disable the old plugins without uninstalling them, so their data stays
-available.
-
 ## Settings
 
 - **Task map**: a Settings section that lists the template steps of each task
