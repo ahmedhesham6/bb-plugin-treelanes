@@ -12,7 +12,7 @@ For coding delivery, read `/ponytail` as the implementation guide; default to fu
 ## Choose the path
 
 - **Workflow opt-out:** run the requested skill directly. Read no board context, save no task, and submit no receipt. This also applies outside Git.
-- **External `/code-review`:** report Standards and Spec findings only. Make no edits or board changes. Research uses `/research` and also returns without a workflow.
+- **External `/code-review`:** report Standards and Spec findings only. Make no edits or board changes. Research also returns without a workflow.
 - **New task or task change:** read [task requests](references/task-requests.md). New tasks use `treelanes_deliver` once and stay in Design. This thread is the orchestrator. Start automation after checked Design completion or an explicit user Start.
 - **Task orchestrator:** read [orchestration](references/orchestration.md) for setup assignments or child-blocker reviews. The board starts children and moves cards.
 - **Explicit manual setup:** read [manual setup](references/manual-setup.md). That path uses `start` for a prepared setup; an explicit user Start can also open the automatic Design Gate.

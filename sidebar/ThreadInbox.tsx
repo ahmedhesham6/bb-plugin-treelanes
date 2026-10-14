@@ -109,7 +109,7 @@ export function ThreadInbox({
     }
   }, [groups, saved]);
   const sorted = useMemo(() => {
-    // Before a group has its own rank, use the first saved T3 member rank.
+    // Before a group has its own rank, use the first saved member rank.
     const ranks = new Map(saved.order);
     for (const g of groups)
       if (!ranks.has(g.id)) {

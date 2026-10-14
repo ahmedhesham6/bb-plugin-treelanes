@@ -8,18 +8,23 @@ MIT license in [pstack-LICENSE](pstack-LICENSE). Local sources are not in Git,
 so they have no commit.
 
 Skills with source `plugin` have no other copy: this plugin owns them. Edit
-them here; the script leaves them alone.
+them here; the script leaves them alone. A `local:<name>` source is a folder
+named `<name>` under `$SKILLS_SOURCE`, the maintainer's skill folder.
+
+Some copies drop text that names skills this plugin does not ship: one
+sentence each in babysit-pr, code-review, principle-minimize-reader-load and
+principle-sequence-verifiable-units. Remove that text again after a sync.
 
 | Skill | Source | Commit |
 | --- | --- | --- |
-| grilling | ~/.agents/skills/grilling | none |
-| tdd | ~/.agents/skills/tdd | none |
-| codebase-design | ~/.agents/skills/codebase-design | none |
-| diagnosing-bugs | ~/.agents/skills/diagnosing-bugs | none |
-| thermo-nuclear-code-quality-review | ~/.agents/skills/thermo-nuclear-code-quality-review | none |
-| babysit-pr | ~/.agents/skills/babysit-pr | none |
-| show-me | ~/.agents/skills/show-me | none |
-| code-review | ~/.agents/skills/code-review | none |
+| grilling | local:grilling | none |
+| tdd | local:tdd | none |
+| codebase-design | local:codebase-design | none |
+| diagnosing-bugs | local:diagnosing-bugs | none |
+| thermo-nuclear-code-quality-review | local:thermo-nuclear-code-quality-review | none |
+| babysit-pr | local:babysit-pr | none |
+| show-me | local:show-me | none |
+| code-review | local:code-review | none |
 | delivery | plugin | none |
 | ponytail | plugin | none |
 | simplify | plugin | none |

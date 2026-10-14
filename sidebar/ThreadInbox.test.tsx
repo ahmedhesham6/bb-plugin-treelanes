@@ -155,7 +155,7 @@ describe("drag edge scrolling", async () => {
   });
 });
 
-describe("t3sidebar registration", async () => {
+describe("sidebar registration", async () => {
   it("registers exactly one thread list", async () => {
     expect(app.threadLists).toHaveLength(1);
     expect(inbox.id).toBe("inbox");

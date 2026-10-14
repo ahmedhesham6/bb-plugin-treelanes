@@ -35,8 +35,8 @@ function oldData() {
     INSERT INTO thread_lifecycle VALUES ('thread-two', 100, NULL, NULL);
     CREATE TABLE worktree_mains (project_id TEXT NOT NULL, environment_id TEXT NOT NULL, thread_id TEXT NOT NULL, PRIMARY KEY(project_id, environment_id));
     INSERT INTO worktree_mains VALUES ('project-one', 'env-one', 'thread-one');
-    CREATE TABLE t3_import (id INTEGER PRIMARY KEY, snapshot TEXT NOT NULL, imported_at INTEGER NOT NULL);
-    INSERT INTO t3_import VALUES (1, '{}', 1);`);
+    CREATE TABLE retired_state (id INTEGER PRIMARY KEY, snapshot TEXT NOT NULL);
+    INSERT INTO retired_state VALUES (1, '{}');`);
   sidebar.close();
   return { dataDir, open };
 }

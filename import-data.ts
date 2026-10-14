@@ -11,7 +11,7 @@ export const importMigration = `CREATE TABLE plugin_import (
   id INTEGER PRIMARY KEY CHECK(id = 1), imported_at INTEGER NOT NULL, summary_json TEXT NOT NULL
 )`;
 
-const SKIPPED_TABLES = new Set(["_bb_migrations", "plugin_import", "t3_import"]);
+const SKIPPED_TABLES = new Set(["_bb_migrations", "plugin_import"]);
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
 /**
