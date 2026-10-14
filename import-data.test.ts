@@ -5,6 +5,8 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
+import { kindTemplate, skillId } from "./task-kinds";
+import { taskContextSchema } from "./stage-evidence";
 
 const cleanup: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const step of cleanup.splice(0).reverse()) await step(); });
@@ -47,10 +49,51 @@ async function start(dataDir: string) {
   }, projects: { list: async () => [] } } });
   cleanup.push(() => host.harness.lifecycle.dispose());
   await plugin(host.bb);
-  return host.harness;
+  return { ...host.harness, db: host.bb.storage.database() };
 }
 
 describe("bb treelanes import", () => {
+  it("keeps an old Saved Task readable and moves its skill IDs to Treelanes", async () => {
+    const { dataDir, open } = oldData();
+    const task = { outcome: "Build the change", scope: ["src/a.ts"], decisions: [], requiredChecks: ["npm test"],
+      allowedActions: ["Edit and test"], kind: "feature", setup: { summary: "Build and check", steps:
+        kindTemplate({ kind: "feature" }).map(({ skills, ...step }) => ({ ...step, execution: {
+          providerId: "test-provider", model: "test-model", reasoningLevel: "high", reason: "Fits the task",
+          modelOverrideReason: "Use the old preference override",
+          skills: step.id === "build" ? [skillId("tdd", "workflow-board")] : [],
+        } })),
+      } };
+    const board = open("workflow-board");
+    board.exec("CREATE TABLE worktree_task_contexts (environment_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, context_json TEXT NOT NULL)");
+    board.prepare("INSERT INTO worktree_task_contexts VALUES (?, ?, ?)").run("env-one", 3, JSON.stringify(task));
+    board.close();
+    const h = await start(dataDir);
+    expect((await h.behavior.runCli(["import"])).exitCode).toBe(0);
+    const row = h.db.prepare("SELECT revision, context_json FROM worktree_task_contexts WHERE environment_id = 'env-one'").get() as { revision: number; context_json: string };
+    const imported = taskContextSchema.parse(JSON.parse(row.context_json));
+    expect(row.revision).toBe(3);
+    expect(imported.outcome).toBe(task.outcome);
+    expect(imported.allowedActions).toEqual(task.allowedActions);
+    expect(imported.setup!.steps[0]!.execution.skills).toEqual([skillId("tdd")]);
+    expect(imported.setup!.steps[0]!.execution).not.toHaveProperty("modelOverrideReason");
+    const unchanged = open("workflow-board");
+    expect(unchanged.prepare("SELECT context_json FROM worktree_task_contexts").get()).toEqual({ context_json: JSON.stringify(task) });
+    unchanged.close();
+  });
+
+  it("rolls back every copied table if a saved task contains invalid JSON", async () => {
+    const { dataDir, open } = oldData();
+    const board = open("workflow-board");
+    board.exec(`CREATE TABLE worktree_task_contexts (environment_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, context_json TEXT NOT NULL);
+      INSERT INTO worktree_task_contexts VALUES ('env-one', 1, '{invalid');`);
+    board.close();
+    const h = await start(dataDir);
+    expect((await h.behavior.runCli(["import"])).exitCode).toBe(1);
+    expect(h.db.prepare("SELECT * FROM worktree_cards").all()).toEqual([]);
+    expect(h.db.prepare("SELECT * FROM plugin_import").all()).toEqual([]);
+    expect(await h.behavior.callRpc("listLifecycle", {})).toEqual({ rows: [] });
+  });
+
   it("starts empty, then copies old board and sidebar data once", async () => {
     const { dataDir, open } = oldData();
     const h = await start(dataDir);

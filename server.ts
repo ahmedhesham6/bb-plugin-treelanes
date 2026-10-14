@@ -1825,7 +1825,7 @@ export default async function plugin(bb: BbPluginApi) {
         return { exitCode: 0, stdout: `${JSON.stringify(result)}\n` };
       }
       if (command === "import") {
-        const result = importOldData(db, bb.server.experimental_dataDir);
+        const result = importOldData(db, bb.server.experimental_dataDir, PLUGIN_SKILLS);
         for (const channel of ["board-changed", "lifecycle", "order", "groups", "titles"]) bb.realtime.publish(channel, {});
         return { exitCode: 0, stdout: `${JSON.stringify(result)}\n` };
       }

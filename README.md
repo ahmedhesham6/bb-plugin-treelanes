@@ -63,6 +63,9 @@ available.
   started; the board rejects a plan that changes it. Settings and
   `bb treelanes health` report a saved choice that the live catalog cannot
   run.
+  A saved orchestrator harness that differs from the initiating thread uses
+  a new orchestrator thread. Unset model and effort choices use that harness's
+  live catalog defaults.
 - **Automatic subthread titles**: off by default. When on, the harness and
   model from the task map's titles row write short sidebar titles in a short
   hidden thread. Custom names stay.
@@ -114,8 +117,9 @@ layout.
 One main thread per Git worktree. Select a main thread to show its children.
 Select another worktree to collapse the previous group. Selecting a child keeps
 its group open. A collapsed main row shows input requests, failures, running
-threads, and unread counts. The list never changes thread visibility or parent
-links.
+threads, and unread counts. The sidebar reveals hidden agent children in the
+same Git Worktree when they link to a visible thread. Internal plugin threads
+stay hidden. Grouping keeps parent links.
 
 Use the row menu for split, read state, pin, archive, delete, settle, snooze,
 restore, or "Use as main thread". Drag a main row to move its worktree. Drag a

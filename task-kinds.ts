@@ -9,8 +9,8 @@ type TemplateStep = Pick<SetupStep, "id" | "stage" | "title" | "instructions" | 
 
 // bb's catalog ID for a skill in this plugin's skills/ folder. Names would
 // collide with provider copies of the same skill.
-export const skillId = (name: string) =>
-  `skill_${createHash("sha256").update(`bb-plugin:${PLUGIN_ID}\0${name}/SKILL.md`).digest("hex")}`;
+export const skillId = (name: string, pluginId = PLUGIN_ID) =>
+  `skill_${createHash("sha256").update(`bb-plugin:${pluginId}\0${name}/SKILL.md`).digest("hex")}`;
 
 const quality: TemplateStep = {
   id: "quality", stage: "quality", title: "Strict review of the task diff",
@@ -97,7 +97,7 @@ export function kindSteps(kind: TaskKind, deliveryTarget?: KindTask["deliveryTar
 /** Template Setup Steps for a task's kind, in order, with skill catalog IDs; none without a kind. */
 export function kindTemplate(task: KindTask): TemplateStep[] {
   if (!task.kind) return [];
-  return kindSteps(task.kind, task.deliveryTarget).map(step => ({ ...step, checks: [...step.checks], skills: step.skills.map(skillId) }));
+  return kindSteps(task.kind, task.deliveryTarget).map(step => ({ ...step, checks: [...step.checks], skills: step.skills.map(name => skillId(name)) }));
 }
 
 /**

@@ -2,7 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { TaskContext } from "./stage-evidence";
 import type { SetupPlan } from "./setup-plan";
 import { buildSetupPrompt, validateSetupProposal } from "./setup-request";
-import { resolveStepExecution } from "./step-execution";
+import { resolveStepExecution, stepExecutionSchema } from "./step-execution";
 import { requireStepChoices, stepChoices, type Choices } from "./task-map";
 
 type Db = ReturnType<BbPluginApi["storage"]["database"]>;
@@ -171,23 +171,35 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       if (thread.id !== run.initiator_thread_id && hooks.hasLiveWork(thread)) return;
     }
     if (job.next_attempt_at > Date.now() || job.attempts >= 2) return;
-    const execution = await bb.sdk.threads.defaultExecutionOptions({ threadId: source.id });
+    const coordinatorId = job.kind !== "initial" ? orchestrator(env) : null;
+    const executionSource = coordinatorId ? await bb.sdk.threads.get({ threadId: coordinatorId }) : source;
+    if (!executionSource || executionSource.archivedAt || executionSource.deletedAt || executionSource.environmentId !== env)
+      throw new Error("The saved orchestrator is unavailable. Keep the task for inspection.");
+    const execution = await bb.sdk.threads.defaultExecutionOptions({ threadId: executionSource.id });
     if (!execution?.model || !execution.reasoningLevel) throw new Error("The initiating thread must have explicit model and effort settings for setup planning.");
-    const inheritedChoice = { providerId: source.providerId, model: execution.model, reasoningLevel: execution.reasoningLevel,
+    const inheritedChoice = { providerId: executionSource.providerId, model: execution.model, reasoningLevel: execution.reasoningLevel,
       permissionMode: execution.permissionMode ?? "auto", ...(execution.serviceTier ? { serviceTier: execution.serviceTier } : {}) };
-    const saved = hooks.choices().orchestrator;
-    const reuseSource = await hooks.useInitiatingThread();
+    const saved = job.kind === "initial" ? hooks.choices().orchestrator : undefined;
+    const reuseSource = (await hooks.useInitiatingThread()) && (!saved?.providerId || saved.providerId === source.providerId);
     if (reuseSource && hooks.hasLiveWork(source)) return;
-    // The initiating thread keeps its harness; a saved choice for another harness applies only to a new thread.
-    const differentProvider = reuseSource && saved?.providerId && saved.providerId !== source.providerId;
-    const selected = saved?.providerId && !differentProvider
-      ? await resolveStepExecution(bb.sdk, { environmentId: env, projectId: source.projectId }, {
-          providerId: saved.providerId, model: saved.model ?? inheritedChoice.model,
-          reasoningLevel: saved.reasoningLevel ?? inheritedChoice.reasoningLevel,
-          skills: [], reason: "Use the Settings orchestrator choice.",
-        } as Parameters<typeof resolveStepExecution>[2]) : inheritedChoice;
+    let selected = inheritedChoice;
+    if (saved?.providerId) {
+      const catalog = await bb.sdk.providers.models({ environmentId: env, providerId: saved.providerId });
+      const model = saved.model ? catalog.models.find(model => model.model === saved.model)
+        : (saved.providerId === source.providerId ? catalog.models.find(model => model.model === inheritedChoice.model) : undefined)
+          ?? catalog.models.find(model => model.isDefault) ?? catalog.models[0];
+      const resolved = await resolveStepExecution(bb.sdk, { environmentId: env, projectId: source.projectId }, stepExecutionSchema.parse({
+        providerId: saved.providerId, model: saved.model ?? model?.model,
+        reasoningLevel: saved.reasoningLevel ?? (saved.providerId === source.providerId && model?.model === inheritedChoice.model
+          ? inheritedChoice.reasoningLevel : model?.defaultReasoningEffort),
+        skills: [], reason: "Use the Settings orchestrator choice.",
+      }));
+      selected = { ...inheritedChoice, ...resolved };
+    }
     const choice: typeof inheritedChoice = job.prepared_json ? JSON.parse(job.prepared_json) : {
-      ...inheritedChoice, providerId: selected.providerId, model: selected.model, reasoningLevel: selected.reasoningLevel,
+      providerId: selected.providerId, model: selected.model, reasoningLevel: selected.reasoningLevel,
+      permissionMode: inheritedChoice.permissionMode,
+      ...(selected.providerId === inheritedChoice.providerId && inheritedChoice.serviceTier ? { serviceTier: inheritedChoice.serviceTier } : {}),
     };
     const context = fresh(job);
     const prompt = buildSetupPrompt({ environmentId: env, requestId: job.id, taskRevision: context.taskRevision,
@@ -200,13 +212,13 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
     if (claim.changes !== 1) return;
     job = latest(env)!;
     try {
-      const coordinatorId = job.kind !== "initial" ? orchestrator(env) : (await hooks.useInitiatingThread()) ? source.id : null;
+      const targetId = coordinatorId ?? (reuseSource ? source.id : null);
       let worker: { id: string };
-      if (coordinatorId) {
-        const coordinator = await bb.sdk.threads.get({ threadId: coordinatorId });
+      if (targetId) {
+        const coordinator = await bb.sdk.threads.get({ threadId: targetId });
         if (!coordinator || coordinator.archivedAt || coordinator.deletedAt || coordinator.environmentId !== env) throw new Error("The saved orchestrator is unavailable. Keep the task for inspection.");
-        db.prepare("UPDATE worktree_setup_requests SET thread_id = ? WHERE id = ?").run(coordinatorId, job.id);
-        await bb.sdk.threads.send({ threadId: coordinatorId, mode: coordinator.status === "active" ? "steer" : "start", model: choice.model, reasoningLevel: choice.reasoningLevel, input: [{ type: "text", mentions: [], text: prompt }] });
+        db.prepare("UPDATE worktree_setup_requests SET thread_id = ? WHERE id = ?").run(targetId, job.id);
+        await bb.sdk.threads.send({ threadId: targetId, mode: coordinator.status === "active" ? "steer" : "start", model: choice.model, reasoningLevel: choice.reasoningLevel, input: [{ type: "text", mentions: [], text: prompt }] });
         worker = coordinator;
       } else {
         worker = await bb.sdk.threads.spawn({ ...choice, projectId: source.projectId, parentThreadId: source.id,

@@ -28,7 +28,7 @@ export const taskMapMigration = `CREATE TABLE task_map_choices (
 export function taskMapLayout() {
   return {
     shared: [
-      { slot: "orchestrator", title: "Orchestrator", detail: "Plans the task setup in the initiating thread." },
+      { slot: "orchestrator", title: "Orchestrator", detail: "Plans the task setup." },
       { slot: "titles", title: "Automatic titles", detail: "Writes short sidebar titles when automatic titles are on." },
     ],
     kinds: TASK_KINDS.map(kind => ({

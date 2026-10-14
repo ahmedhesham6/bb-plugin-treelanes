@@ -311,6 +311,42 @@ describe("saved stage evidence", () => {
     expect(await next.harness.behavior.callRpc("getTaskMap", {})).toMatchObject({ choices });
   });
 
+  it.each([true, false])("uses a saved orchestrator harness and its catalog defaults with initiating-thread reuse %s", async reuse => {
+    const t = await setup(false, { useInitiatingThread: reuse });
+    t.root.providerId = "codex";
+    t.harness.inspection.sdk.stub("threads.defaultExecutionOptions", async () => ({
+      model: "gpt-5.6-sol", reasoningLevel: "high", permissionMode: "auto", serviceTier: "fast", source: "client/turn/start",
+    }));
+    t.harness.inspection.sdk.stub("providers.models", async () => ({
+      modelLoadError: null, permissionCeiling: "auto", providers: [{ id: "other", available: true }], selectedOnlyModels: [],
+      models: [{ id: "other-model", model: "other-model", displayName: "Other", isDefault: true,
+        defaultReasoningEffort: "low", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Low" }] }],
+    }) as never);
+    await t.harness.behavior.callRpc("saveTaskMap", { choices: { orchestrator: { providerId: "other" } } });
+    await t.harness.behavior.callAgentTool("treelanes_deliver", { stage: "tdd", task: t.task }, t.agent);
+    expect(t.sends).toHaveLength(0);
+    expect(t.requests).toHaveLength(1);
+    expect(t.requests[0]).toMatchObject({ providerId: "other", model: "other-model", reasoningLevel: "low" });
+    expect(t.requests[0]).not.toHaveProperty("serviceTier");
+    expect((await t.context()).orchestratorThreadId).toBe(t.threads[1]!.id);
+    const planner = { ...t.agent, threadId: t.threads[1]!.id };
+    t.harness.inspection.sdk.stub("threads.defaultExecutionOptions", async ({ threadId }) => ({
+      model: threadId === planner.threadId ? "other-model" : "gpt-5.6-sol",
+      reasoningLevel: threadId === planner.threadId ? "low" : "high", permissionMode: "auto", source: "client/turn/start",
+    }));
+    await t.harness.behavior.callAgentTool("treelanes_apply_setup", { setup: { summary: "Check", steps: [{
+      id: "fix", title: "Fix", stage: "tdd", instructions: "Fix the defect", checks: ["API regression"],
+      execution: { providerId: "other", model: "other-model", reasoningLevel: "low", skills: [], reason: "Fits" },
+    }] } }, planner);
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    await t.harness.behavior.callRpc("saveTaskMap", { choices: { orchestrator: { providerId: "codex" } } });
+    await t.harness.behavior.callAgentTool("treelanes_recover", { reason: "Needs a plan change", nextAction: "Inspect the parser and rerun the regression" },
+      { ...t.agent, threadId: t.threads[2]!.id });
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    expect(t.sends).toHaveLength(1);
+    expect(t.sends[0]).toMatchObject({ threadId: planner.threadId, model: "other-model", reasoningLevel: "low" });
+  });
+
   it("reports unavailable saved choices in Settings and health", async () => {
     const t = await setup();
     t.harness.inspection.sdk.stub("providers.list", async () => [

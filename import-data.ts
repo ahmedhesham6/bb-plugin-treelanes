@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { skillId } from "./task-kinds";
 
 type Db = ReturnType<BbPluginApi["storage"]["database"]>;
 
@@ -19,7 +20,7 @@ const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
  * Only columns both sides have are copied, so an older source schema works.
  * A second run does nothing; a destination with data is refused.
  */
-export function importOldData(db: Db, dataDir: string) {
+export function importOldData(db: Db, dataDir: string, skills: readonly string[]) {
   const done = db.prepare("SELECT imported_at, summary_json FROM plugin_import").get() as
     { imported_at: number; summary_json: string } | undefined;
   if (done) return { alreadyImported: true, importedAt: done.imported_at, copied: JSON.parse(done.summary_json) };
@@ -49,6 +50,18 @@ export function importOldData(db: Db, dataDir: string) {
       for (const item of plan) {
         const result = db.prepare(`INSERT INTO main.${quote(item.table)} (${item.columns}) SELECT ${item.columns} FROM ${item.schema}.${quote(item.table)}`).run();
         (summary[item.source] ??= {})[item.table] = result.changes;
+      }
+      const ids = new Map(skills.map(name => [skillId(name, IMPORT_SOURCES[0]), skillId(name)]));
+      for (const table of local) {
+        for (const column of columns("main", table).filter(name => ["context_json", "execution_json", "prepared_json"].includes(name))) {
+          const rows = db.prepare(`SELECT rowid, ${quote(column)} AS json FROM ${quote(table)} WHERE ${quote(column)} IS NOT NULL`).all() as { rowid: number; json: string }[];
+          const update = db.prepare(`UPDATE ${quote(table)} SET ${quote(column)} = ? WHERE rowid = ?`);
+          for (const row of rows) {
+            const json = JSON.stringify(JSON.parse(row.json, (key, value) =>
+              key === "modelOverrideReason" ? undefined : typeof value === "string" ? ids.get(value) ?? value : value));
+            update.run(json, row.rowid);
+          }
+        }
       }
       db.prepare("INSERT INTO plugin_import VALUES (1, ?, ?)").run(Date.now(), JSON.stringify(summary));
       return summary;
