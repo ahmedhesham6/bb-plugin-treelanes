@@ -4,7 +4,7 @@ import { requiredStageChecks } from "./delivery-plan";
 import { normalizeLegacyDeliveryStages, requirePrWatch, setupPlanSchema, type SetupPlan, type SetupStep } from "./setup-plan";
 import type { TaskContext } from "./stage-evidence";
 import { DELIVERY_SKILL_INSTRUCTION, IMPLEMENTATION_GUIDE } from "./stage-prompts";
-import { kindTemplate } from "./task-kinds";
+import { kindTemplate, validateKindSteps } from "./task-kinds";
 
 const operationalStages = new Set(["tdd", "quality", "simplify", "pr"]);
 export const setupProposalSchema = z
@@ -54,6 +54,7 @@ export function validateSetupProposal(
   const parsed = setupPlanSchema.parse(proposed);
   normalizeLegacyDeliveryStages({ ...previous, setup: parsed });
   requirePrWatch({ ...previous, setup: parsed });
+  validateKindSteps(previous, parsed);
   for (const step of parsed.steps) assertCheckBudget(step, previous);
 
   if (!recovery) {

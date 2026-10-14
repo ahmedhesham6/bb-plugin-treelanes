@@ -8,6 +8,7 @@ import { captureWorkspace, completionEvidenceSchema, taskContextSchema } from ".
 import { nextDeliveryStage, requiredStageChecks } from "./delivery-plan";
 import { activeSetupStep, nextSetupStep, normalizeLegacyDeliveryStages, preserveCompletedSteps, requirePrWatch, validateSetupRevision } from "./setup-plan";
 import { resolveStepExecution } from "./step-execution";
+import { validateKindSteps } from "./task-kinds";
 import { createSetupAutomation, setupAutomationMigration } from "./setup-automation";
 import { createThreadRetry, threadRetryMigration } from "./thread-retry";
 import { createStageContinuation, stageContinuationMigration } from "./stage-continuation";
@@ -1078,6 +1079,7 @@ export default async function plugin(bb: BbPluginApi) {
     const prepared = db.prepare("SELECT execution_json FROM worktree_stage_thread_launches WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
       .get(context.environmentId, state.stage, state.updated_at) as { execution_json: string | null } | undefined;
     task.setup = preserveCompletedSteps(current.task?.setup, task.setup, state.active_step_id);
+    if (task.setup) validateKindSteps(task, task.setup);
     validateSetupRevision(current.task?.setup, task.setup, state.active_step_id, state.stage, Boolean(prepared?.execution_json || (launch && ["started", "starting"].includes(launch.status))));
     const correctedSelection = launch && ["failed", "blocked"].includes(launch.status) && !prepared?.execution_json &&
       JSON.stringify(activeSetupStep(current.task?.setup, state.active_step_id)?.execution) !== JSON.stringify(activeSetupStep(task.setup, state.active_step_id)?.execution);

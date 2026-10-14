@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { SetupStep } from "./setup-plan";
+import type { SetupPlan, SetupStep } from "./setup-plan";
 
 export const TASK_KINDS = ["feature", "bug-fix", "refactor", "perf"] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
@@ -92,4 +92,33 @@ const templates: Record<TaskKind, TemplateStep[]> = {
 export function kindTemplate(task: { kind?: TaskKind; deliveryTarget?: "pr" | "local" }): TemplateStep[] {
   if (!task.kind) return [];
   return task.deliveryTarget === "pr" ? [...templates[task.kind], pr] : templates[task.kind];
+}
+
+/**
+ * Reject a Task Setup that leaves out a template step without a skip reason,
+ * or changes a template step's stage, checks, required skills or order.
+ * Extra steps, checks and skills are allowed.
+ */
+export function validateKindSteps(task: { kind?: TaskKind; deliveryTarget?: "pr" | "local" }, plan: SetupPlan): void {
+  const template = kindTemplate(task);
+  const ids = new Set(template.map(step => step.id));
+  for (const { stepId } of plan.skipped ?? []) {
+    if (!ids.has(stepId)) throw new Error(`Skipped step ${JSON.stringify(stepId)} is not a ${task.kind ?? "task kind"} template step.`);
+  }
+  let last = -1;
+  for (const expected of template) {
+    const index = plan.steps.findIndex(step => step.id === expected.id);
+    if (index < 0) {
+      if (plan.skipped?.some(skip => skip.stepId === expected.id)) continue;
+      throw new Error(`Keep template step ${JSON.stringify(expected.id)} or add it to skipped with a reason.`);
+    }
+    const step = plan.steps[index]!;
+    if (step.stage !== expected.stage) throw new Error(`Template step ${JSON.stringify(step.id)} must keep stage ${expected.stage}.`);
+    const check = expected.checks.find(check => !step.checks.includes(check));
+    if (check) throw new Error(`Template step ${JSON.stringify(step.id)} must keep check ${JSON.stringify(check)}.`);
+    const skill = expected.skills.find(skill => !step.execution.skills.includes(skill));
+    if (skill) throw new Error(`Template step ${JSON.stringify(step.id)} must keep required skill ${skill}.`);
+    if (index < last) throw new Error(`Keep template steps in template order; ${JSON.stringify(step.id)} is out of order.`);
+    last = index;
+  }
 }

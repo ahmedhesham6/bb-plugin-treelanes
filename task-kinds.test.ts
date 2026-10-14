@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildSetupPrompt } from "./setup-request";
+import type { SetupPlan } from "./setup-plan";
+import { buildSetupPrompt, validateSetupProposal } from "./setup-request";
 import { taskContextSchema } from "./stage-evidence";
 import { kindTemplate } from "./task-kinds";
 import { shippedSkills } from "./test-workspace";
@@ -49,5 +50,43 @@ describe("task kinds", () => {
       }
     }
     expect(buildSetupPrompt(input)).not.toMatch(/template/i);
+  });
+});
+
+describe("kind template rules on a setup proposal", () => {
+  const bugFix = taskContextSchema.parse(task("bug-fix"));
+  const fromTemplate = (): SetupPlan => ({ summary: "Bug fix.", steps: structuredClone(kindTemplate(bugFix)).map(({ skills, ...step }) =>
+    ({ ...step, execution: { providerId: "codex", model: "m", reasoningLevel: "low", skills, reason: "Fits." } })) });
+  const edit = (change: (plan: SetupPlan) => void) => { const plan = fromTemplate(); change(plan); return plan; };
+  const extra = { ...fromTemplate().steps[0]!, id: "notes", title: "Write notes" };
+
+  it("accepts the template with extra steps, checks and skills, and skips with a reason", () => {
+    const plan = edit(plan => {
+      plan.steps[2]!.checks.push("Extra check"); plan.steps[2]!.execution.skills.push("extra-skill");
+      plan.steps.splice(3, 0, extra); plan.steps.pop(); plan.skipped = [{ stepId: "simplify", reason: "One-line fix." }];
+    });
+    expect(() => validateSetupProposal(bugFix, plan, "tdd", null, false)).not.toThrow();
+  });
+
+  it.each([
+    ["a missing step without a skip entry", (plan: SetupPlan) => { plan.steps.pop(); }, /simplify/],
+    ["a skip entry outside the template", (plan: SetupPlan) => { plan.skipped = [{ stepId: "extra", reason: "Not needed." }]; }, /extra/],
+    ["a changed stage", (plan: SetupPlan) => { plan.steps[1]!.stage = "quality"; }, /root-cause.*stage/],
+    ["a dropped check", (plan: SetupPlan) => { plan.steps[2]!.checks = ["Another check"]; }, /fix.*check/],
+    ["a dropped skill", (plan: SetupPlan) => { plan.steps[0]!.execution.skills.pop(); }, /reproduce.*skill/],
+    ["out-of-order steps", (plan: SetupPlan) => { plan.steps.splice(0, 2, plan.steps[1]!, plan.steps[0]!); }, /order/],
+  ])("rejects %s", (_, change, message) => {
+    expect(() => validateSetupProposal(bugFix, edit(change), "tdd", null, false)).toThrow(message);
+  });
+
+  it("applies no kind rule without a kind", () => {
+    const plan = edit(plan => { plan.steps = [extra]; });
+    expect(() => validateSetupProposal(taskContextSchema.parse(task()), plan, "tdd", null, false)).not.toThrow();
+  });
+
+  it("applies in recovery", () => {
+    const previous = { ...bugFix, setup: fromTemplate() };
+    expect(() => validateSetupProposal(previous, fromTemplate(), "tdd", "root-cause", true)).not.toThrow();
+    expect(() => validateSetupProposal(previous, edit(plan => { plan.steps.pop(); }), "tdd", "root-cause", true)).toThrow(/simplify/);
   });
 });

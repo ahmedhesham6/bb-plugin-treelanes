@@ -28,7 +28,13 @@ describe("setup changes", () => {
     expect(() => validateSetupRevision(plan, undefined, "current", "tdd", true)).toThrow();
     expect(() => validateSetupRevision(undefined, plan, null, "quality", false)).toThrow(/first/);
   });
+  it("accepts a skipped list with reasons", () => {
+    expect(setupPlanSchema.parse({ ...plan, skipped: [{ stepId: "simplify", reason: "One-line change" }] }).skipped)
+      .toEqual([{ stepId: "simplify", reason: "One-line change" }]);
+  });
   it.each([
+    { ...plan, skipped: [{ stepId: "simplify", reason: " " }] },
+    { ...plan, skipped: [{ stepId: "first", reason: "Both kept and skipped" }] },
     { ...plan, steps: [step("duplicate"), step("duplicate")] },
     { ...plan, steps: [{ ...step("first"), stage: "pr" }, step("last")] },
     { ...plan, steps: [{ ...step("unchecked"), checks: [] }] },

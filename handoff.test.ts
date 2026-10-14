@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
+import { kindTemplate } from "./task-kinds";
 import { makeWorkspaceSdk, shippedSkills } from "./test-workspace";
 import type { ProviderInfo, ThreadEventRow } from "@get-bb/plugin-sdk";
 
@@ -312,6 +313,16 @@ describe("saved stage evidence", () => {
     expect(t.stage()).toBe("simplify");
     expect(t.requests.at(-1)).toMatchObject({ providerId: override ? "codex" : "claude-code", model: override ? "small" : "claude-fable-5-1", reasoningLevel: override ? "low" : "high" });
     expect((await t.context()).execution.reason).toBe(reason);
+  });
+
+  it("rejects a saved setup that breaks the kind template", async () => {
+    const t = await setup();
+    const [build, quality] = kindTemplate({ kind: "feature" }).map(({ skills, ...step }) =>
+      ({ ...step, execution: { providerId: "codex", model: "small", reasoningLevel: "low", skills, reason: "Fits." } }));
+    const save = (setup: object) => t.harness.behavior.callAgentTool("workflow_board_set_task", { ...t.task, kind: "feature", setup }, t.agent);
+    await expect(save({ summary: "Build and review", steps: [build, quality] })).rejects.toThrow(/simplify/);
+    await save({ summary: "Build and review", steps: [build, quality], skipped: [{ stepId: "simplify", reason: "One-line change." }] });
+    expect((await t.context()).task.setup.skipped).toEqual([{ stepId: "simplify", reason: "One-line change." }]);
   });
 
   it("keeps a stage worker visible when its task parent is hidden", async () => {

@@ -2,8 +2,10 @@ import { z } from "zod";
 import { checkNameSchema } from "./delivery-plan";
 import { stepExecutionSchema } from "./step-execution";
 
+const stepIdSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+
 export const setupStepSchema = z.object({
-  id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+  id: stepIdSchema,
   title: z.string().trim().min(1).max(160),
   stage: z.enum(["tdd", "quality", "simplify", "pr"]),
   instructions: z.string().trim().min(1).max(4096),
@@ -14,9 +16,12 @@ export const setupStepSchema = z.object({
 export const setupPlanSchema = z.object({
   summary: z.string().trim().min(1).max(1024),
   steps: z.array(setupStepSchema).min(1).max(24),
+  // Kind template steps left out on purpose, each with its reason.
+  skipped: z.array(z.object({ stepId: stepIdSchema, reason: z.string().trim().min(1).max(1024) }).strict()).max(24).optional(),
 }).strict().superRefine((plan, ctx) => {
-  if (new Set(plan.steps.map(step => step.id)).size !== plan.steps.length) {
-    ctx.addIssue({ code: "custom", message: "Setup step IDs must be unique." });
+  const ids = [...plan.steps.map(step => step.id), ...(plan.skipped ?? []).map(skip => skip.stepId)];
+  if (new Set(ids).size !== ids.length) {
+    ctx.addIssue({ code: "custom", message: "Setup step IDs must be unique, and a skipped step cannot also be a step." });
   }
   if (plan.steps.some((step, index) => step.stage === "pr" && index !== plan.steps.length - 1)) {
     ctx.addIssue({ code: "custom", message: "PR Watch must be the final setup step." });
