@@ -7,11 +7,8 @@ The pstack skills come from <https://github.com/backnotprop/pstack> under the
 MIT license in [pstack-LICENSE](pstack-LICENSE). Local sources are not in Git,
 so they have no commit.
 
-Before removing the BB user copies after install, retain their source folders
-in a directory outside `~/.bb/skills`. For later upgrades, run
-`scripts/sync-skills.sh /path/to/retained-sources`; that directory must contain
-`delivery/`, `ponytail/`, and `simplify/`. With no argument, the script uses
-`~/.bb/skills`. It checks all source folders before it changes any copy.
+Skills with source `plugin` have no other copy: this plugin owns them. Edit
+them here; the script leaves them alone.
 
 | Skill | Source | Commit |
 | --- | --- | --- |
@@ -23,9 +20,9 @@ in a directory outside `~/.bb/skills`. For later upgrades, run
 | babysit-pr | ~/.agents/skills/babysit-pr | none |
 | show-me | ~/.agents/skills/show-me | none |
 | code-review | ~/.agents/skills/code-review | none |
-| delivery | ~/.bb/skills/delivery | none |
-| ponytail | ~/.bb/skills/ponytail | none |
-| simplify | ~/.bb/skills/simplify | none |
+| delivery | plugin | none |
+| ponytail | plugin | none |
+| simplify | plugin | none |
 | principle-test-behavior-not-implementation | pstack:skills/principle-test-behavior-not-implementation | 1f0f9c3bac03c4297f6fc8f7644fa412eda57085 |
 | principle-fix-root-causes | pstack:skills/principle-fix-root-causes | 1f0f9c3bac03c4297f6fc8f7644fa412eda57085 |
 | principle-minimize-reader-load | pstack:skills/principle-minimize-reader-load | 1f0f9c3bac03c4297f6fc8f7644fa412eda57085 |

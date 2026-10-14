@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Copy every skill in skills/SOURCES.md again from its source.
 # Review the diff afterwards; never edit the copies by hand.
+# Skills with source "plugin" live only here and are skipped.
 set -euo pipefail
 skills=$(cd "$(dirname "$0")/../skills" && pwd)
-bb_sources=${1:-"$HOME/.bb/skills"}
 pstack=$(mktemp -d)
 trap 'rm -rf "$pstack"' EXIT
 git clone --quiet --depth 1 https://github.com/backnotprop/pstack "$pstack"
@@ -14,11 +14,11 @@ while IFS='|' read -r _ name source _; do
   name=$(echo $name) source=$(echo $source)
   case $source in
     pstack:*) from=$pstack/${source#pstack:} ;;
-    '~/.bb/skills/'*) from=$bb_sources/${source##*/} ;;
+    plugin) continue ;;
     *) from=${source/#\~/$HOME} ;;
   esac
   if [[ ! -d "$from" ]]; then
-    echo "Missing source: $from. Pass the retained BB skill source directory as the first argument." >&2
+    echo "Missing source: $from" >&2
     exit 1
   fi
   names+=("$name") sources+=("$from")

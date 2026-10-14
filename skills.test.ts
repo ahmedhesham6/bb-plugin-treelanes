@@ -18,7 +18,7 @@ describe("shipped skills", () => {
     expect(listed.sort()).toEqual(shippedSkills);
   });
 
-  it("syncs from retained BB sources and leaves copies intact if a source is missing", () => {
+  it("syncs sources, skips plugin-owned skills and leaves copies intact if a source is missing", () => {
     const root = mkdtempSync(join(tmpdir(), "workflow-skill-sync-"));
     const put = (path: string, contents: string, mode?: number) => {
       mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -27,23 +27,21 @@ describe("shipped skills", () => {
     const commit = "a".repeat(40);
     try {
       put("scripts/sync-skills.sh", read("./scripts/sync-skills.sh"));
-      put("skills/SOURCES.md", `| tdd | ${join(root, "local/tdd")} | none |\n| delivery | ~/.bb/skills/delivery | none |\n`);
-      put("local/tdd/SKILL.md", "New TDD source");
-      put("retained/delivery/SKILL.md", "Retained delivery source");
+      put("skills/SOURCES.md", `| tdd | ${join(root, "local/tdd")} | none |\n| delivery | plugin | none |\n`);
       put("skills/tdd/SKILL.md", "Old TDD copy");
-      put("skills/delivery/SKILL.md", "Old delivery copy");
+      put("skills/delivery/SKILL.md", "Plugin delivery");
       put("pstack/LICENSE", "MIT license");
       // Replace the network clone; file copies use the real rsync command.
       put("bin/git", `#!/usr/bin/env bash\nif [[ $1 == clone ]]; then cp -R "$PSTACK_FIXTURE/." "\${@: -1}"; else echo ${commit}; fi\n`, 0o755);
       const env = { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH}`,
         PSTACK_FIXTURE: join(root, "pstack") };
-      const sync = (...args: string[]) => execFileSync("bash", [join(root, "scripts/sync-skills.sh"), ...args], { env, stdio: "pipe" });
-      expect(() => sync(join(root, "missing"))).toThrow(/Missing source/);
+      const sync = () => execFileSync("bash", [join(root, "scripts/sync-skills.sh")], { env, stdio: "pipe" });
+      expect(() => sync()).toThrow(/Missing source/);
       expect(readFileSync(join(root, "skills/tdd/SKILL.md"), "utf8")).toBe("Old TDD copy");
-      expect(readFileSync(join(root, "skills/delivery/SKILL.md"), "utf8")).toBe("Old delivery copy");
-      sync(join(root, "retained"));
+      put("local/tdd/SKILL.md", "New TDD source");
+      sync();
       expect(readFileSync(join(root, "skills/tdd/SKILL.md"), "utf8")).toBe("New TDD source");
-      expect(readFileSync(join(root, "skills/delivery/SKILL.md"), "utf8")).toBe("Retained delivery source");
+      expect(readFileSync(join(root, "skills/delivery/SKILL.md"), "utf8")).toBe("Plugin delivery");
       expect(readFileSync(join(root, "skills/pstack-LICENSE"), "utf8")).toBe("MIT license");
     } finally {
       rmSync(root, { recursive: true, force: true });
