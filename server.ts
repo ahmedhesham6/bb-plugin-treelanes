@@ -15,6 +15,9 @@ import { createStageContinuation, stageContinuationMigration } from "./stage-con
 import { createTddRepair, tddRepairMigration } from "./tdd-repair";
 import { buildStagePrompt, DEFAULT_STAGE_PROMPTS } from "./stage-prompts";
 import { setupProposalSchema } from "./setup-request";
+import { sidebar, sidebarMigrations } from "./sidebar/server";
+import { importMigration, importOldData } from "./import-data";
+import { choicesSchema, type Choices, liveCatalog, requireStepChoices, stepChoices, taskMapLayout, taskMapMigration, taskMapStore } from "./task-map";
 import {
   DEFAULT_STAGE,
   STAGE_IDS,
@@ -38,17 +41,6 @@ const threadStatusSchema = z.enum([
   "starting",
   "active",
 ]);
-
-const sidebarLifecycleOutputSchema = z.object({
-  rows: z.array(
-    z.object({
-      threadId: z.string(),
-      settledAt: z.number().nullable(),
-      snoozedUntil: z.number().nullable(),
-      snoozedAt: z.number().nullable(),
-    }),
-  ),
-});
 
 const workThreadSchema = z.object({
   id: z.string(),
@@ -121,7 +113,6 @@ export type BoardResult = z.infer<typeof boardOutputSchema>;
 export type ComposerDefaultsResult = z.infer<typeof composerDefaultsOutputSchema>;
 
 export const rpcContract = defineRpcContract({
-  listMainThreads: { input: z.object({}).strict(), output: z.object({ rows: z.array(z.object({ projectId: z.string(), environmentId: z.string(), threadId: z.string() })) }) },
   getBoard: {
     input: z.object({ projectId: z.string().nullable() }).strict(),
     output: boardOutputSchema,
@@ -152,7 +143,11 @@ export const rpcContract = defineRpcContract({
     input: z.object({ environmentId: z.string() }).strict(),
     output: z.object({ threadId: z.string() }),
   },
+  getTaskMap: { input: z.object({}).strict(), output: z.custom<TaskMapResult>() },
+  saveTaskMap: { input: z.object({ choices: choicesSchema }).strict(), output: z.custom<TaskMapResult>() },
 });
+
+export type TaskMapResult = ReturnType<typeof taskMapLayout> & { choices: Choices } & Awaited<ReturnType<typeof liveCatalog>>;
 
 type ThreadRow = {
   id: string;
@@ -252,16 +247,8 @@ function isWorktreeThread(thread: ThreadRow): boolean {
 
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
-    lifecycleProvider: { type: "select", label: "Sidebar lifecycle provider", options: ["t3sidebar", "worktree-sidebar"], default: "t3sidebar" },
     startInDesign: { type: "boolean", label: "Wait in Design before automatic delivery", default: true },
     useInitiatingThread: { type: "boolean", label: "Use the initiating thread as orchestrator", default: true },
-    orchestratorProviderId: { type: "string", label: "Preferred orchestrator provider", default: "" },
-    orchestratorModel: { type: "string", label: "Preferred orchestrator model", default: "" },
-    orchestratorReasoningLevel: { type: "select", label: "Preferred orchestrator reasoning (auto lets the orchestrator choose)", options: ["auto", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode", "none"], default: "auto" },
-    tddReasoningLevel: { type: "select", label: "Preferred TDD reasoning (auto lets the orchestrator choose)", options: ["auto", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode", "none"], default: "auto" },
-    reviewReasoningLevel: { type: "select", label: "Preferred Quality reasoning (auto lets the orchestrator choose)", options: ["auto", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode", "none"], default: "auto" },
-    simplifyReasoningLevel: { type: "select", label: "Preferred Simplify reasoning (auto lets the orchestrator choose)", options: ["auto", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode", "none"], default: "auto" },
-    prReasoningLevel: { type: "select", label: "Preferred PR Watch reasoning (auto lets the orchestrator choose)", options: ["auto", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode", "none"], default: "auto" },
     autoAdvanceGrilling: {
       type: "boolean",
       label: "Move finished Grilling to TDD",
@@ -272,45 +259,15 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Move through Implementation when work finishes",
       default: true,
     },
-    tddProviderId: {
-      type: "string",
-      label: "Preferred TDD provider (blank lets the orchestrator choose)",
-      default: "",
-    },
-    tddModel: {
-      type: "string",
-      label: "Preferred TDD model (blank lets the orchestrator choose)",
-      default: "",
-    },
     tddPrompt: {
       type: "string",
       label: "TDD prompt",
       default: DEFAULT_STAGE_PROMPTS.tdd,
     },
-    reviewProviderId: {
-      type: "string",
-      label: "Preferred Quality provider (blank lets the orchestrator choose)",
-      default: "",
-    },
-    reviewModel: {
-      type: "string",
-      label: "Preferred Quality model (blank lets the orchestrator choose)",
-      default: "",
-    },
     reviewPrompt: {
       type: "string",
       label: "Quality review prompt",
       default: DEFAULT_STAGE_PROMPTS.quality,
-    },
-    simplifyProviderId: {
-      type: "string",
-      label: "Preferred Simplify provider",
-      default: "claude-code",
-    },
-    simplifyModel: {
-      type: "string",
-      label: "Preferred Simplify model",
-      default: "claude-fable-5-1",
     },
     simplifyPrompt: {
       type: "string",
@@ -323,39 +280,12 @@ export default async function plugin(bb: BbPluginApi) {
       options: ["ask", "auto"],
       default: "auto",
     },
-    prProviderId: {
-      type: "string",
-      label: "Preferred PR Watch provider",
-      default: "codex",
-    },
-    prModel: {
-      type: "string",
-      label: "Preferred PR Watch model",
-      default: "gpt-5.6-sol",
-    },
     prPrompt: {
       type: "string",
       label: "PR prompt",
       default: DEFAULT_STAGE_PROMPTS.pr,
     },
   });
-  async function modelPreferences() {
-    const config = await settings.get();
-    const choice = (providerId: string, model: string, reasoningLevel: string) => ({
-      providerId: providerId.trim() || null, model: model.trim() || null,
-      ...(reasoningLevel && reasoningLevel !== "auto" ? { reasoningLevel } : {}),
-    });
-    return {
-      modelMap: {
-        orchestrator: choice(config.orchestratorProviderId, config.orchestratorModel, config.orchestratorReasoningLevel),
-        tdd: choice(config.tddProviderId, config.tddModel, config.tddReasoningLevel),
-        quality: choice(config.reviewProviderId, config.reviewModel, config.reviewReasoningLevel),
-        simplify: choice(config.simplifyProviderId, config.simplifyModel, config.simplifyReasoningLevel),
-        pr: choice(config.prProviderId, config.prModel, config.prReasoningLevel),
-      },
-      modelSelectionPolicy: "These are preferences, not fixed choices. Validate against the live catalog. Choose effort and skills for the task. The board uses these provider/model/effort preferences unless execution.modelOverrideReason explains why another choice fits this task better. execution.reason alone does not override a preference. Blank preferences leave the choice to the orchestrator. Settings apply to future planning; keep running workers and completed steps unchanged.",
-    };
-  }
   let disposed = false;
   bb.onDispose(() => { disposed = true; });
   const db = bb.storage.database();
@@ -440,7 +370,18 @@ export default async function plugin(bb: BbPluginApi) {
     threadRetryMigration,
     tddRepairMigration,
     stageContinuationMigration,
+    ...sidebarMigrations,
+    importMigration,
+    taskMapMigration,
   ]);
+  const taskMap = taskMapStore(db);
+  const sidebarState = sidebar(bb, db, {
+    preferredMains: () => db.prepare("SELECT p.project_id AS projectId, r.environment_id AS environmentId, r.initiator_thread_id AS threadId FROM worktree_delivery_runs r JOIN worktree_setup_projects p ON p.environment_id = r.environment_id").all() as Array<{ projectId: string; environmentId: string; threadId: string }>,
+    titleChoice: () => {
+      const choice = taskMap.read().titles;
+      return choice?.providerId && choice.model ? { providerId: choice.providerId, model: choice.model } : null;
+    },
+  });
 
   const readWorktreeState = db.prepare(
     "SELECT environment_id, stage, note, updated_at, owner_thread_id, active_step_id FROM worktree_cards WHERE environment_id = ?",
@@ -514,7 +455,7 @@ export default async function plugin(bb: BbPluginApi) {
   const stageContinuation = createStageContinuation(bb, db, () => disposed);
   const tddRepair = createTddRepair(bb, db, () => disposed);
   const setupAutomation = createSetupAutomation(bb, db, {
-    modelPreferences,
+    choices: () => taskMap.read(),
     useInitiatingThread: async () => (await settings.get()).useInitiatingThread,
     context(environmentId) {
       const state = readWorktreeState.get(environmentId) as WorktreeStateRow | undefined;
@@ -610,25 +551,9 @@ export default async function plugin(bb: BbPluginApi) {
     return readLegacyState.get(thread.id) as LegacyCardStateRow | undefined;
   }
 
-  async function readSidebarLifecycle() {
-    try {
-      return await bb.sdk.plugins.callRpc({
-        pluginId: (await settings.get()).lifecycleProvider,
-        method: "listLifecycle",
-        input: {},
-        outputSchema: sidebarLifecycleOutputSchema,
-      });
-    } catch (error) {
-      bb.log.debug(
-        `Could not read sidebar lifecycle: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return { rows: [] };
-    }
-  }
-
   async function startStageThread(
     environmentId: string,
-    requested: { providerId: string; model: string; prompt: string },
+    prompt: string,
     stage?: StageId,
     stageUpdatedAt?: number,
   ) {
@@ -674,12 +599,12 @@ export default async function plugin(bb: BbPluginApi) {
     if (step && state) {
       const prior = db.prepare("SELECT execution_json FROM worktree_stage_thread_launches WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
         .get(environmentId, state.stage, state.updated_at) as { execution_json: string | null } | undefined;
-      selected = prior?.execution_json ? JSON.parse(prior.execution_json) : await resolveStepExecution(bb.sdk, { environmentId, projectId: environment.projectId }, step.execution, (await modelPreferences()).modelMap[step.stage]);
+      selected = prior?.execution_json ? JSON.parse(prior.execution_json) : await resolveStepExecution(bb.sdk, { environmentId, projectId: environment.projectId }, step.execution);
       db.prepare("UPDATE worktree_stage_thread_launches SET execution_json = ? WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
         .run(JSON.stringify(selected), environmentId, state.stage, state.updated_at);
     }
-    const providerId = selected?.providerId ?? (requested.providerId.trim() || sourceThread.providerId);
-    const requestedModel = selected?.model ?? requested.model.trim();
+    const providerId = selected?.providerId ?? sourceThread.providerId;
+    const requestedModel = selected?.model;
     const canInheritExecution =
       providerId === sourceThread.providerId &&
       (!requestedModel || requestedModel === execution?.model);
@@ -735,7 +660,7 @@ export default async function plugin(bb: BbPluginApi) {
       },
       environment: { type: "reuse", environmentId },
       prompt: buildStagePrompt({
-        stage: stage ?? stageSchema.parse(state?.stage ?? "tdd"), prompt: requested.prompt, environmentId,
+        stage: stage ?? stageSchema.parse(state?.stage ?? "tdd"), prompt, environmentId,
         stageUpdatedAt: stageUpdatedAt ?? state?.updated_at, taskRevision: savedRevision,
         activeStepId: step?.id ?? null, previousThreadId: previous?.thread_id ?? sourceThread.id,
       }),
@@ -766,7 +691,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function launchStageThreadOnce(
     environmentId: string, stage: StageId, stageUpdatedAt: number,
-    requested: { providerId: string; model: string; prompt: string },
+    prompt: string,
     explicit = false,
   ) {
     if (disposed || paused(environmentId)) return null;
@@ -797,7 +722,7 @@ export default async function plugin(bb: BbPluginApi) {
       const candidates = [...await listThreads(environment.projectId), ...await listThreads(environment.projectId, true)];
       const orphan = candidates.find(thread => thread.environmentId === environmentId && thread.title === launchTitle(environmentId, stage, stageUpdatedAt));
       const liveWorker = orphan ?? await findLiveStageWorker(environmentId, stage);
-      const thread = liveWorker ?? await startStageThread(environmentId, requested, stage, stageUpdatedAt);
+      const thread = liveWorker ?? await startStageThread(environmentId, prompt, stage, stageUpdatedAt);
       saveStageThreadLaunch.run(environmentId, stage, stageUpdatedAt, "started", thread.id);
       setOwner.run(thread.id, environmentId, stageUpdatedAt);
       return thread;
@@ -818,36 +743,20 @@ export default async function plugin(bb: BbPluginApi) {
     if (blockedAttempt(environmentId)) throw new Error("Recorded checks are blocked; do not restart the same stage. Read context for the evidence.");
     const config = await settings.get();
     if (stage === "tdd") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, {
-        providerId: config.tddProviderId,
-        model: config.tddModel,
-        prompt: config.tddPrompt,
-      }, explicit);
+      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.tddPrompt, explicit);
     }
     if (stage === "quality") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, {
-        providerId: config.reviewProviderId,
-        model: config.reviewModel,
-        prompt: config.reviewPrompt,
-      }, explicit);
+      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.reviewPrompt, explicit);
     }
     if (stage === "simplify") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, {
-        providerId: config.simplifyProviderId,
-        model: config.simplifyModel,
-        prompt: config.simplifyPrompt,
-      }, explicit);
+      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.simplifyPrompt, explicit);
     }
     if (stage === "pr" && config.simplifyToPrMode === "ask" && !explicit) {
       addPendingStageThreadLaunch.run(environmentId, stage, stageUpdatedAt);
       return null;
     }
     if (stage === "pr") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, {
-        providerId: config.prProviderId,
-        model: config.prModel,
-        prompt: config.prPrompt,
-      }, explicit);
+      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.prPrompt, explicit);
     }
     return null;
   }
@@ -1024,7 +933,7 @@ export default async function plugin(bb: BbPluginApi) {
       automaticSetup: null, blockedAttempt: null, activeStep: null, nextStep: null,
       setupComplete: false, completedStepIds: [], execution: null, requiredChecks: [],
       nextStage: null, paused: paused(environmentId), workspaceDigest: null,
-      instruction: "No Worktree Stage is assigned. This read did not create a card or start a worker. For a new task, submit workflow_board_deliver once to register this thread as orchestrator and wait in Design. Complete Design or wait for the user to start automation. For research or an explicit workflow opt-out, continue the requested work directly without board setup. Never submit completion evidence for an unassigned stage." };
+      instruction: "No Worktree Stage is assigned. This read did not create a card or start a worker. For a new task, submit treelanes_deliver once to register this thread as orchestrator and wait in Design. Complete Design or wait for the user to start automation. For research or an explicit workflow opt-out, continue the requested work directly without board setup. Never submit completion evidence for an unassigned stage." };
   }
 
   async function currentContext(threadId: string, snapshot = true) {
@@ -1047,7 +956,7 @@ export default async function plugin(bb: BbPluginApi) {
     const nextStep = saved.task?.setup ? nextSetupStep(saved.task.setup, state.active_step_id) : null;
     const executionRow = db.prepare("SELECT execution_json FROM worktree_stage_thread_launches WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
       .get(environmentId, state.stage, state.updated_at) as { execution_json: string | null } | undefined;
-    return { ...await modelPreferences(), environmentId, stage: state.stage, stageUpdatedAt: state.updated_at,
+    return { stepChoices: stepChoices(saved.task?.kind, taskMap.read()), environmentId, stage: state.stage, stageUpdatedAt: state.updated_at,
       ownerThreadId: state.owner_thread_id ?? null, taskRevision: saved.revision, task: saved.task,
       automaticSetup: setupAutomation.latest(environmentId) ?? null,
       orchestratorThreadId: setupAutomation.orchestrator(environmentId),
@@ -1079,8 +988,14 @@ export default async function plugin(bb: BbPluginApi) {
     const prepared = db.prepare("SELECT execution_json FROM worktree_stage_thread_launches WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
       .get(context.environmentId, state.stage, state.updated_at) as { execution_json: string | null } | undefined;
     task.setup = preserveCompletedSteps(current.task?.setup, task.setup, state.active_step_id);
-    if (task.setup) validateKindSteps(task, task.setup);
-    validateSetupRevision(current.task?.setup, task.setup, state.active_step_id, state.stage, Boolean(prepared?.execution_json || (launch && ["started", "starting"].includes(launch.status))));
+    const activeFixed = Boolean(prepared?.execution_json || (launch && ["started", "starting"].includes(launch.status)));
+    if (task.setup) {
+      validateKindSteps(task, task.setup);
+      // Settings bind steps that have not started; started and completed steps keep their choice.
+      const active = task.setup.steps.findIndex(step => step.id === state.active_step_id);
+      requireStepChoices(task.kind, task.setup.steps.slice(active < 0 ? 0 : active + Number(activeFixed)), taskMap.read());
+    }
+    validateSetupRevision(current.task?.setup, task.setup, state.active_step_id, state.stage, activeFixed);
     const correctedSelection = launch && ["failed", "blocked"].includes(launch.status) && !prepared?.execution_json &&
       JSON.stringify(activeSetupStep(current.task?.setup, state.active_step_id)?.execution) !== JSON.stringify(activeSetupStep(task.setup, state.active_step_id)?.execution);
     for (const step of task.setup?.steps ?? []) {
@@ -1240,7 +1155,7 @@ export default async function plugin(bb: BbPluginApi) {
     ]);
     const matches = skills.skills.filter(skill => (!skill.provider || !providerId || skill.provider === providerId) &&
       `${skill.name} ${skill.description ?? ""}`.toLowerCase().includes(skillQuery.toLowerCase()));
-    return { ...await modelPreferences(), providers: providers.map(provider => ({ id: provider.id, name: provider.displayName, available: provider.available })),
+    return { providers: providers.map(provider => ({ id: provider.id, name: provider.displayName, available: provider.available })),
       models: models?.models ?? [], modelLoadError: models?.modelLoadError ?? null,
       skills: matches.slice(0, 80).map(({ id, name, description, provider }) => ({ id, name, description, provider })), skillsTruncated: matches.length > 80 };
   }
@@ -1509,9 +1424,24 @@ export default async function plugin(bb: BbPluginApi) {
     try { await recovery; } finally { recovery = undefined; }
   }
 
+  async function readTaskMap(): Promise<TaskMapResult> {
+    const choices = taskMap.read();
+    return { ...taskMapLayout(), choices, ...await liveCatalog(bb.sdk, choices) };
+  }
+
+  async function taskMapHealth() {
+    const choices = taskMap.read();
+    if (!Object.keys(choices).length) return [];
+    try {
+      return (await liveCatalog(bb.sdk, choices)).problems.map(problem => ({ status: "task-map-unavailable", slot: problem.slot, error: problem.message }));
+    } catch (error) {
+      return [{ status: "task-map-unchecked", slot: null, error: `Could not read the live catalog: ${error instanceof Error ? error.message : String(error)}` }];
+    }
+  }
+
   async function health(projectId: string | null) {
     const board = await getBoard(projectId);
-    return (await Promise.all(board.cards.map(async card => {
+    return [...await taskMapHealth(), ...(await Promise.all(board.cards.map(async card => {
       const launch = readStageThreadLaunch.get(card.environmentId, card.stage, card.stageUpdatedAt) as StageThreadLaunchRow | undefined;
       const blocker = blockedAttempt(card.environmentId);
       const repair = blocker ? tddRepair.describe(card.environmentId, blocker.evidence, card.status === "active", paused(card.environmentId), card.hasPendingInteraction) : null;
@@ -1561,14 +1491,14 @@ export default async function plugin(bb: BbPluginApi) {
       return [{ environmentId: card.environmentId, projectId: card.projectId, stage: card.stage,
         stageUpdatedAt: card.stageUpdatedAt, status, attempts: launch.attempt_count,
         error, waitingForInput: card.hasPendingInteraction, hasLiveWork: card.status === "active" }];
-    }))).flat();
+    }))).flat()];
   }
 
   async function getBoard(projectId: string | null) {
     const [threads, projects, lifecycle] = await Promise.all([
       listThreads(projectId ?? undefined),
       bb.sdk.projects.list({ includePersonal: true }),
-      readSidebarLifecycle(),
+      sidebarState.lifecycle(),
     ]);
     const projectNames = new Map(
       projects.map((project) => [project.id, project.name]),
@@ -1587,7 +1517,7 @@ export default async function plugin(bb: BbPluginApi) {
     );
     const threadById = new Map(threads.map((thread) => [thread.id, thread]));
     const settledAtByThread = new Map(
-      lifecycle.rows.flatMap((row) =>
+      lifecycle.flatMap((row) =>
         row.settledAt === null ? [] : [[row.threadId, row.settledAt] as const],
       ),
     );
@@ -1694,7 +1624,6 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   bb.rpc.register(rpcContract, {
-    listMainThreads: async () => ({ rows: db.prepare("SELECT p.project_id AS projectId, r.environment_id AS environmentId, r.initiator_thread_id AS threadId FROM worktree_delivery_runs r JOIN worktree_setup_projects p ON p.environment_id = r.environment_id").all() as Array<{projectId:string;environmentId:string;threadId:string}> }),
     getBoard: ({ projectId }) => getBoard(projectId),
     moveCard: ({ environmentId, stage, note }) =>
       moveWorktree(environmentId, stage, note, "panel"),
@@ -1706,19 +1635,14 @@ export default async function plugin(bb: BbPluginApi) {
       const target = await bb.sdk.threads.get({ threadId });
       const thread = (await listThreads(target.projectId)).find((row) => row.id === threadId);
       if (!thread || !isWorktreeThread(thread)) {
-        throw new Error("This thread is not on the Workflow Board.");
+        throw new Error("This thread is not on the board.");
       }
       if (thread.hasPendingInteraction || hasLiveWork(thread)) {
         throw new Error("This thread has live work or a pending question. Wait before settling it.");
       }
-      const result = await bb.sdk.plugins.callRpc({
-        pluginId: (await settings.get()).lifecycleProvider,
-        method: "settle",
-        input: { threadId },
-        outputSchema: z.object({ ok: z.literal(true) }),
-      });
+      await sidebarState.settle({ threadId });
       bb.realtime.publish("board-changed", { environmentId: thread.environmentId });
-      return result;
+      return { ok: true as const };
     },
     getComposerDefaults: async ({ threadId }) => {
       const [thread, execution] = await Promise.all([
@@ -1737,6 +1661,11 @@ export default async function plugin(bb: BbPluginApi) {
           : {}),
       };
     },
+    getTaskMap: () => readTaskMap(),
+    saveTaskMap: async ({ choices }) => {
+      taskMap.save(choices);
+      return readTaskMap();
+    },
     startStageThread: async ({ environmentId }) => {
       const state = readWorktreeState.get(environmentId) as WorktreeStateRow | undefined;
       if (!state || state.stage !== "pr") throw new Error("This Git Worktree has no PR thread to start.");
@@ -1748,7 +1677,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.agents.registerTool({
-    name: "workflow_board_move_card",
+    name: "treelanes_move_card",
     description:
       "Assign the current Git worktree card to the stage that matches the work now being done. All threads in the worktree share the stage.",
     instructions:
@@ -1783,95 +1712,100 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.agents.registerTool({
-    name: "workflow_board_get_context",
+    name: "treelanes_get_context",
     description: "Read the saved task, owner, revisions and current file digest. A worktree without an assigned stage returns status unassigned without creating a card or starting work.",
     parameters: z.object({}),
     async execute(_input, context) { return JSON.stringify(await readContext(context.threadId)); },
   });
   bb.agents.registerTool({
-    name: "workflow_board_set_task",
+    name: "treelanes_set_task",
     description: "Save the existing authorized outcome, scope, accepted decisions, required checks, and allowed actions for this worktree. Reuse decisions while their scope still applies.",
     parameters: taskContextSchema,
     async execute(input, context) { return JSON.stringify(await saveTaskContext(context.threadId, input)); },
   });
   bb.agents.registerTool({
-    name: "workflow_board_complete_stage",
+    name: "treelanes_complete_stage",
     description: "Record actual check evidence from fresh context. Only recorded:true permits a completion marker and later dispatch. For an incomplete TDD, Quality or Simplify step, include nextAction for a concrete repair in this thread. See /delivery for receipt and recovery rules.",
     parameters: completionEvidenceSchema,
     async execute(input, context) { return JSON.stringify(await submitCompletion(context.threadId, input)); },
   });
 
   bb.agents.registerTool({
-    name: "workflow_board_start",
+    name: "treelanes_start",
     description: "Only when the user explicitly asks to start: open a saved automatic task from Design and continue planning in its original thread. Never use this to infer Design approval. For manual setups, start the saved current step once. Pauses and pending questions block dispatch.",
     parameters: z.object({}),
     async execute(_input, context) { return JSON.stringify(await startSavedSetup(context.threadId)); },
   });
   bb.agents.registerTool({
-    name: "workflow_board_catalog",
+    name: "treelanes_catalog",
     description: "Inspect installed harnesses, exact available models and effort levels, and relevant skills before choosing a task setup. Give providerId to read models and skillQuery to narrow skills.",
     parameters: z.object({ providerId: z.string().max(128).optional(), skillQuery: z.string().max(160).optional() }),
     async execute(input, context) { return JSON.stringify(await setupCatalog(context.threadId, input.providerId, input.skillQuery)); },
   });
   bb.agents.registerTool({
-    name: "workflow_board_playbooks",
+    name: "treelanes_playbooks",
     description: "Read recent checked setups in this project as starting points for a new task. Prior results never grant authority or validate new work.",
     parameters: z.object({}),
     async execute(_input, context) { return JSON.stringify(setupPlaybooks(context.projectId)); },
   });
 
-  bb.agents.registerTool({ name: "workflow_board_deliver", description: "Register the task once. New tasks wait in Design by default. This thread remains the orchestrator; after checked Design completion or explicit user Start it plans from live catalogs, then the board dispatches children. Do not start TDD from an unconfirmed design.",
+  bb.agents.registerTool({ name: "treelanes_deliver", description: "Register the task once. New tasks wait in Design by default. This thread remains the orchestrator; after checked Design completion or explicit user Start it plans from live catalogs, then the board dispatches children. Do not start TDD from an unconfirmed design.",
     parameters: automaticDeliverySchema,
     async execute(input, context) { return JSON.stringify(await deliverAutomatically(context.threadId, input)); },
   });
-  bb.agents.registerTool({ name: "workflow_board_apply_setup", description: "Assigned setup worker only: validate and save the setup proposal. The board retains the authorized task and dispatches after this worker is idle.",
+  bb.agents.registerTool({ name: "treelanes_apply_setup", description: "Assigned setup worker only: validate and save the setup proposal. The board retains the authorized task and dispatches after this worker is idle.",
     parameters: setupProposalSchema,
     async execute(input, context) { return JSON.stringify(await setupAutomation.apply(context.threadId, input.setup)); },
   });
-  bb.agents.registerTool({ name: "workflow_board_reopen", description: "Only at the user's request: reopen an idle PR Watch task in Design for changed work. Keep its history and original orchestrator; fresh checks are required. Read context and pass its taskRevision.",
+  bb.agents.registerTool({ name: "treelanes_reopen", description: "Only at the user's request: reopen an idle PR Watch task in Design for changed work. Keep its history and original orchestrator; fresh checks are required. Read context and pass its taskRevision.",
     parameters: reopenRequestSchema,
     async execute(input, context) { return JSON.stringify(await reopenTask(context.threadId, input)); },
   });
-  bb.agents.registerTool({ name: "workflow_board_recover", description: "Current worker only: request a bounded plan change after a technical failure. A recorded blocker requires nextAction with a concrete in-scope change. Do not retry unchanged base or external failures. Preserve scope and checks. End the turn; the setup worker replans after you are idle. Never use for pending human decisions.",
+  bb.agents.registerTool({ name: "treelanes_recover", description: "Current worker only: request a bounded plan change after a technical failure. A recorded blocker requires nextAction with a concrete in-scope change. Do not retry unchanged base or external failures. Preserve scope and checks. End the turn; the setup worker replans after you are idle. Never use for pending human decisions.",
     parameters: recoveryRequestSchema,
     async execute(input, context) { return JSON.stringify(await requestPlanRecovery(context.threadId, input.reason, input.nextAction)); },
   });
 
   // The setup worker gets only the skills its instructions name; board threads get every skill in skills/.
   bb.agents.configure(context => setupAutomation.isPlanner(context.thread.id, context.thread.title) ? {
-    tools: ["workflow_board_reopen", "workflow_board_apply_setup", "workflow_board_catalog", "workflow_board_get_context", "workflow_board_playbooks"], skills: ["delivery", "ponytail"],
+    tools: ["treelanes_reopen", "treelanes_apply_setup", "treelanes_catalog", "treelanes_get_context", "treelanes_playbooks"], skills: ["delivery", "ponytail"],
     instructions: "Use /delivery as the persistent task orchestrator. Follow the current assignment: submit setup or guide the existing child. The board owns dispatch and card moves; do not edit product code.",
   } : ({
-    tools: ["workflow_board_reopen", "workflow_board_move_card", "workflow_board_get_context", "workflow_board_set_task", "workflow_board_complete_stage", "workflow_board_start", "workflow_board_catalog", "workflow_board_playbooks", "workflow_board_deliver", "workflow_board_recover"],
+    tools: ["treelanes_reopen", "treelanes_move_card", "treelanes_get_context", "treelanes_set_task", "treelanes_complete_stage", "treelanes_start", "treelanes_catalog", "treelanes_playbooks", "treelanes_deliver", "treelanes_recover"],
     skills: [...PLUGIN_SKILLS],
     instructions:
-      "For Git Worktree delivery, use /delivery. Honor explicit workflow opt-outs. New tasks use workflow_board_deliver once; existing workers follow fresh board context. The board owns dispatch and card moves after checked receipts. Keep the Design Gate, saved authority and user stops. Use review for external /code-review and done only after a verified PR merge.",
+      "For Git Worktree delivery, use /delivery. Honor explicit workflow opt-outs. New tasks use treelanes_deliver once; existing workers follow fresh board context. The board owns dispatch and card moves after checked receipts. Keep the Design Gate, saved authority and user stops. Use review for external /code-review and done only after a verified PR merge.",
   }));
 
   const cliCommands = [
-      { name: "deliver", summary: "Plan and run an authorized task", usage: "bb workflow-board deliver '<json>'" },
-      { name: "apply-setup", summary: "Submit the assigned setup proposal", usage: "bb workflow-board apply-setup '<json>'" },
-      { name: "reopen", summary: "Reopen PR Watch in Design at the user's request", usage: `bb workflow-board reopen '{"taskRevision":2,"reason":"User requested changed work"}'` },
-      { name: "recover", summary: "Request bounded plan recovery", usage: `bb workflow-board recover '{"reason":"...","nextAction":"..."}'` },
-      { name: "start", summary: "Start the saved setup step once", usage: "bb workflow-board start" },
-      { name: "catalog", summary: "Read live setup choices", usage: "bb workflow-board catalog [provider-id] [skill-query]" },
-      { name: "playbooks", summary: "Read recent checked setups", usage: "bb workflow-board playbooks [project-id]" },
-      { name: "history", summary: "Read saved task revisions", usage: "bb workflow-board history" },
-      { name: "show", summary: "Show worktree stages", usage: "bb workflow-board show [project-id]" },
-      { name: "move", summary: "Move the worktree for a thread", usage: "bb workflow-board move <stage> [thread-id] [note]" },
-      { name: "snapshot", summary: "Read the current worktree file digest", usage: "bb workflow-board snapshot <environment-id>" },
-      { name: "context", summary: "Read saved task and current file revision", usage: "bb workflow-board context" },
-      { name: "task", summary: "Save the authorized work request", usage: "bb workflow-board task '<json>'" },
-      { name: "complete", summary: "Record checked stage completion", usage: "bb workflow-board complete '<json>'" },
-      { name: "health", summary: "Read pending and failed launches as JSON", usage: "bb workflow-board health [project-id]" },
-      { name: "reconcile", summary: "Recover eligible stage launches and check merged PRs", usage: "bb workflow-board reconcile [project-id]" },
-      { name: "pause", summary: "Pause automatic work for a worktree", usage: "bb workflow-board pause [environment-id]" },
-      { name: "resume", summary: "Resume automatic work for a worktree", usage: "bb workflow-board resume [environment-id]" },
-      { name: "stages", summary: "List valid stages", usage: "bb workflow-board stages" },
+      { name: "deliver", summary: "Plan and run an authorized task", usage: "bb treelanes deliver '<json>'" },
+      { name: "apply-setup", summary: "Submit the assigned setup proposal", usage: "bb treelanes apply-setup '<json>'" },
+      { name: "reopen", summary: "Reopen PR Watch in Design at the user's request", usage: `bb treelanes reopen '{"taskRevision":2,"reason":"User requested changed work"}'` },
+      { name: "recover", summary: "Request bounded plan recovery", usage: `bb treelanes recover '{"reason":"...","nextAction":"..."}'` },
+      { name: "start", summary: "Start the saved setup step once", usage: "bb treelanes start" },
+      { name: "catalog", summary: "Read live setup choices", usage: "bb treelanes catalog [provider-id] [skill-query]" },
+      { name: "playbooks", summary: "Read recent checked setups", usage: "bb treelanes playbooks [project-id]" },
+      { name: "history", summary: "Read saved task revisions", usage: "bb treelanes history" },
+      { name: "show", summary: "Show worktree stages", usage: "bb treelanes show [project-id]" },
+      { name: "move", summary: "Move the worktree for a thread", usage: "bb treelanes move <stage> [thread-id] [note]" },
+      { name: "snapshot", summary: "Read the current worktree file digest", usage: "bb treelanes snapshot <environment-id>" },
+      { name: "context", summary: "Read saved task and current file revision", usage: "bb treelanes context" },
+      { name: "task", summary: "Save the authorized work request", usage: "bb treelanes task '<json>'" },
+      { name: "complete", summary: "Record checked stage completion", usage: "bb treelanes complete '<json>'" },
+      { name: "health", summary: "Read pending and failed launches as JSON", usage: "bb treelanes health [project-id]" },
+      { name: "reconcile", summary: "Recover eligible stage launches and check merged PRs", usage: "bb treelanes reconcile [project-id]" },
+      { name: "pause", summary: "Pause automatic work for a worktree", usage: "bb treelanes pause [environment-id]" },
+      { name: "resume", summary: "Resume automatic work for a worktree", usage: "bb treelanes resume [environment-id]" },
+      { name: "stages", summary: "List valid stages", usage: "bb treelanes stages" },
+      { name: "import", summary: "Copy old workflow-board and worktree-sidebar data once into a new install", usage: "bb treelanes import" },
+      { name: "list-main", summary: "Show saved and preferred sidebar main threads and group order", usage: "bb treelanes list-main" },
+      { name: "main", summary: "Choose a sidebar main thread", usage: "bb treelanes main <project> <environment> <thread>" },
+      { name: "titles", summary: "Show automatic title choice, stored names and errors", usage: "bb treelanes titles" },
+      { name: "generate-titles", summary: "Process one pending title batch", usage: "bb treelanes generate-titles" },
     ];
-  const cliHelp = `Workflow Board commands:\n${cliCommands.map(command => `${command.usage}\n  ${command.summary}`).join("\n")}\n`;
+  const cliHelp = `Treelanes commands:\n${cliCommands.map(command => `${command.usage}\n  ${command.summary}`).join("\n")}\n`;
   bb.cli.register({
-    name: "workflow-board",
+    name: "treelanes",
     summary: "Read and move worktree cards",
     commands: cliCommands,
     async run(argv, context) {
@@ -1888,6 +1822,11 @@ export default async function plugin(bb: BbPluginApi) {
             const input = recoveryRequestSchema.parse(text.trimStart().startsWith("{") ? JSON.parse(text) : { reason: text });
             return requestPlanRecovery(threadId, input.reason, input.nextAction);
           })();
+        return { exitCode: 0, stdout: `${JSON.stringify(result)}\n` };
+      }
+      if (command === "import") {
+        const result = importOldData(db, bb.server.experimental_dataDir, PLUGIN_SKILLS);
+        for (const channel of ["board-changed", "lifecycle", "order", "groups", "titles"]) bb.realtime.publish(channel, {});
         return { exitCode: 0, stdout: `${JSON.stringify(result)}\n` };
       }
       if (command === "playbooks") return { exitCode: 0, stdout: `${JSON.stringify(setupPlaybooks(args[0] ?? context.projectId))}\n` };
@@ -1955,7 +1894,9 @@ export default async function plugin(bb: BbPluginApi) {
         if (result.blockedReason) return { exitCode: 2, stderr: `${result.blockedReason}\n` };
         return { exitCode: 0, stdout: `Moved ${result.worktreeName} to ${stageLabel(stageArg)}.\n` };
       }
-      return { exitCode: 2, stderr: `Unknown workflow-board command: ${command}\n${cliHelp}` };
+      const sidebarResult = await sidebarState.cli(argv);
+      if (sidebarResult) return sidebarResult;
+      return { exitCode: 2, stderr: `Unknown treelanes command: ${command}\n${cliHelp}` };
     },
   });
 
@@ -1993,5 +1934,5 @@ export default async function plugin(bb: BbPluginApi) {
   settings.onChange(() => {
     if (!disposed) void reconcileWorktrees().catch(error => bb.log.error(`Settings recovery failed: ${String(error)}`));
   });
-  bb.log.info("Workflow Board loaded");
+  bb.log.info("Treelanes loaded");
 }

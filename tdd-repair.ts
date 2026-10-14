@@ -68,7 +68,7 @@ export function createTddRepair(bb: BbPluginApi, db: Db, disposed: () => boolean
     if (claim.changes !== 1) return;
     try {
       await bb.sdk.threads.send({ threadId, mode: "start", input: [{ type: "text", mentions: [], text:
-        `${DELIVERY_SKILL_INSTRUCTION}\nRead /delivery's references/recovery.md. Continue the saved ${evidence.stage} repair in this thread. Read workflow_board_get_context and confirm ownership, stageUpdatedAt ${evidence.stageUpdatedAt}, and taskRevision ${evidence.taskRevision}.\nNext action: ${evidence.nextAction}\nRerun affected checks and submit fresh actual evidence.`,
+        `${DELIVERY_SKILL_INSTRUCTION}\nRead /delivery's references/recovery.md. Continue the saved ${evidence.stage} repair in this thread. Read treelanes_get_context and confirm ownership, stageUpdatedAt ${evidence.stageUpdatedAt}, and taskRevision ${evidence.taskRevision}.\nNext action: ${evidence.nextAction}\nRerun affected checks and submit fresh actual evidence.`,
       }] });
       if (!disposed()) db.prepare("UPDATE worktree_tdd_repairs SET status = 'sent' WHERE key = ?").run(repair.key);
     } catch (error) {

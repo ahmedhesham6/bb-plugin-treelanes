@@ -1,42 +1,43 @@
 import { createHash } from "node:crypto";
+import { PLUGIN_ID } from "./plugin-id";
 import type { SetupPlan, SetupStep } from "./setup-plan";
 
 export const TASK_KINDS = ["feature", "bug-fix", "refactor", "perf"] as const;
-type TaskKind = (typeof TASK_KINDS)[number];
+export type TaskKind = (typeof TASK_KINDS)[number];
 type KindTask = { kind?: TaskKind; deliveryTarget?: "pr" | "local" };
 type TemplateStep = Pick<SetupStep, "id" | "stage" | "title" | "instructions" | "checks"> & { skills: string[] };
 
 // bb's catalog ID for a skill in this plugin's skills/ folder. Names would
 // collide with provider copies of the same skill.
-const skill = (name: string) =>
-  `skill_${createHash("sha256").update(`bb-plugin:workflow-board\0${name}/SKILL.md`).digest("hex")}`;
+export const skillId = (name: string, pluginId = PLUGIN_ID) =>
+  `skill_${createHash("sha256").update(`bb-plugin:${pluginId}\0${name}/SKILL.md`).digest("hex")}`;
 
 const quality: TemplateStep = {
   id: "quality", stage: "quality", title: "Strict review of the task diff",
   instructions: "Review the full task diff against the Saved Task and fix valid findings within scope.",
   checks: ["Strict review reports no findings."],
-  skills: [skill("thermo-nuclear-code-quality-review"), skill("principle-minimize-reader-load")],
+  skills: ["thermo-nuclear-code-quality-review", "principle-minimize-reader-load"],
 };
 const simplify: TemplateStep = {
   id: "simplify", stage: "simplify", title: "Simplify the task changes",
   instructions: "Reduce needless code in the task diff without changing behavior.",
   checks: ["Behavior does not change and all required checks pass."],
-  skills: [skill("simplify"), skill("ponytail")],
+  skills: ["simplify", "ponytail"],
 };
 const pr: TemplateStep = {
   id: "pr", stage: "pr", title: "PR Watch",
   instructions: "Open or reuse the pull request and watch it until it is ready to merge.",
   checks: [],
-  skills: [skill("babysit-pr"), skill("show-me")],
+  skills: ["babysit-pr", "show-me"],
 };
-const diagnose = [skill("diagnosing-bugs"), skill("principle-fix-root-causes")];
+const diagnose = ["diagnosing-bugs", "principle-fix-root-causes"];
 
 const templates: Record<TaskKind, TemplateStep[]> = {
   feature: [{
     id: "build", stage: "tdd", title: "Build the change",
     instructions: "Build the change test-first through the accepted test interfaces, then run it on the surface it touches.",
     checks: ["The change works on the surface it touches, shown by a run, not unit tests alone."],
-    skills: [skill("tdd"), skill("ponytail"), skill("principle-model-the-domain"), skill("principle-test-behavior-not-implementation")],
+    skills: ["tdd", "ponytail", "principle-model-the-domain", "principle-test-behavior-not-implementation"],
   }, quality, simplify],
   "bug-fix": [{
     id: "reproduce", stage: "tdd", title: "Reproduce the defect",
@@ -52,47 +53,51 @@ const templates: Record<TaskKind, TemplateStep[]> = {
     id: "fix", stage: "tdd", title: "Fix the defect",
     instructions: "Commit a failing test for the reproduction, then fix the root cause in a later commit.",
     checks: ["The same reproduction now passes and the failing test commit comes before the fix commit."],
-    skills: [skill("tdd"), skill("ponytail"), skill("principle-test-behavior-not-implementation")],
+    skills: ["tdd", "ponytail", "principle-test-behavior-not-implementation"],
   }, quality, simplify],
   refactor: [{
     id: "pin-behavior", stage: "tdd", title: "Pin current behavior",
     instructions: "Record current behavior before code moves. Prove each pin test can fail by changing the code on purpose.",
     checks: ["A characterization test or equivalence check records current behavior before code moves."],
-    skills: [skill("tdd"), skill("principle-test-behavior-not-implementation")],
+    skills: ["tdd", "principle-test-behavior-not-implementation"],
   }, {
     id: "subtract", stage: "tdd", title: "Remove dead code",
     instructions: "Remove dead code and one-caller wrappers while the pin stays green.",
     checks: ["Dead code and one-caller wrappers are removed and the pin stays green."],
-    skills: [skill("ponytail"), skill("principle-subtract-before-you-add"), skill("principle-migrate-callers-then-delete-legacy-apis")],
+    skills: ["ponytail", "principle-subtract-before-you-add", "principle-migrate-callers-then-delete-legacy-apis"],
   }, {
     id: "reshape", stage: "tdd", title: "Reshape the code",
     instructions: "Move callers to the new shape and delete the old API in the same step.",
     checks: ["Callers use the new shape, the old API is deleted in the same step, the pin stays green."],
-    skills: [skill("tdd"), skill("codebase-design"), skill("principle-model-the-domain"), skill("principle-sequence-verifiable-units")],
+    skills: ["tdd", "codebase-design", "principle-model-the-domain", "principle-sequence-verifiable-units"],
   }, quality],
   perf: [{
     id: "baseline", stage: "tdd", title: "Measure the baseline",
     instructions: "Capture a baseline number from a named probe before any change.",
     checks: ["A baseline number from a named probe, captured before any change."],
-    skills: [skill("benchmark-checklist")],
+    skills: ["benchmark-checklist"],
   }, {
     id: "fix", stage: "tdd", title: "Make the change",
     instructions: "Make the performance change while existing tests stay green.",
     checks: ["Existing tests stay green."],
-    skills: [skill("tdd"), skill("ponytail"), skill("principle-sequence-verifiable-units")],
+    skills: ["tdd", "ponytail", "principle-sequence-verifiable-units"],
   }, {
     id: "measure", stage: "tdd", title: "Measure the result",
     instructions: "Run the same probe again and report the change from the baseline.",
     checks: ["An after number from the same probe with the change from the baseline."],
-    skills: [skill("benchmark-checklist")],
+    skills: ["benchmark-checklist"],
   }, quality],
 };
 
-/** Template Setup Steps for a task's kind, in order; none without a kind. */
+/** Template steps with skill names: each kind's own steps, then PR Watch for a PR target. */
+export function kindSteps(kind: TaskKind, deliveryTarget?: KindTask["deliveryTarget"]): TemplateStep[] {
+  return deliveryTarget === "pr" ? [...templates[kind], pr] : templates[kind];
+}
+
+/** Template Setup Steps for a task's kind, in order, with skill catalog IDs; none without a kind. */
 export function kindTemplate(task: KindTask): TemplateStep[] {
   if (!task.kind) return [];
-  const steps = task.deliveryTarget === "pr" ? [...templates[task.kind], pr] : templates[task.kind];
-  return steps.map(step => ({ ...step, checks: [...step.checks], skills: [...step.skills] }));
+  return kindSteps(task.kind, task.deliveryTarget).map(step => ({ ...step, checks: [...step.checks], skills: step.skills.map(name => skillId(name)) }));
 }
 
 /**

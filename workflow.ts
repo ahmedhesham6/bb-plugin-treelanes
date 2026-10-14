@@ -9,7 +9,7 @@ export const STAGES = [
     id: "design",
     label: "Design",
     shortLabel: "Design",
-    description: "Shape the work with Wayfinder or Grilling.",
+    description: "Shape the work with Grilling.",
   },
   {
     id: "tdd",

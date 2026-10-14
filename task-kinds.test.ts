@@ -11,7 +11,7 @@ const task = (kind?: unknown) => ({ outcome: "Change it.", scope: ["a.ts"], deci
   allowedActions: ["Edit a.ts."], ...(kind === undefined ? {} : { kind }) });
 // The catalog ID bb gives a skill in this plugin's skills/ folder.
 const catalogId = (name: string) =>
-  `skill_${createHash("sha256").update(`bb-plugin:workflow-board\0${name}/SKILL.md`).digest("hex")}`;
+  `skill_${createHash("sha256").update(`bb-plugin:treelanes\0${name}/SKILL.md`).digest("hex")}`;
 
 describe("task kinds", () => {
   it("accepts the four kinds and a task without a kind", () => {
@@ -37,6 +37,8 @@ describe("task kinds", () => {
       for (const step of kindTemplate({ kind, deliveryTarget: "pr" }))
         for (const skill of step.skills) expect(shipped).toContain(skill);
     expect(kindTemplate({ kind: "bug-fix" })[0]!.skills).toEqual([catalogId("diagnosing-bugs"), catalogId("principle-fix-root-causes")]);
+    // The ID a live bb catalog gave the shipped tdd skill of plugin treelanes.
+    expect(kindTemplate({ kind: "feature" })[0]!.skills[0]).toBe("skill_be770585e3c00bb7048489911a88678935ab2249dae66ef8e36ce3243591a92c");
   });
 
   it("gives the setup worker the kind and every template step id, check and skill ID", () => {

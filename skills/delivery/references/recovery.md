@@ -18,6 +18,6 @@ Keep base failures and external limits separate from branch defects. Preserve th
 
 ## Different plan or failed runtime turn
 
-Use `workflow_board_recover` with `reason` and `nextAction` only when an in-scope repair needs a different plan. Name the change and the check it can resolve, then end without a marker. The board waits for this worker to become idle and allows at most two plan changes. Pending human decisions cannot use this path.
+Use `treelanes_recover` with `reason` and `nextAction` only when an in-scope repair needs a different plan. Name the change and the check it can resolve, then end without a marker. The board waits for this worker to become idle and allows at most two plan changes. Pending human decisions cannot use this path.
 
 A failed runtime turn uses the board's Same-thread Retry, with two attempts per assignment. It keeps the thread, model, revision, and stage. A normal turn that omits a receipt may get a bounded continuation in that thread. Pauses, manual stops, pending input, queued work, and recorded blockers keep their own rules. An uncertain dispatch remains visible in health; do not send a duplicate or create a replacement worker.

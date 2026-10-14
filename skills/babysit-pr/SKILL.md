@@ -29,7 +29,7 @@ Done when: you can state the scope in one sentence and have read all review feed
 
 ### 2. Rebase
 
-If the branch is behind its base: `git fetch origin && git rebase origin/<base>`, then `git push --force-with-lease`. On conflict, resolve keeping each side's intent — your branch's changes stay held to scope — or invoke the `resolving-merge-conflicts` skill if available.
+If the branch is behind its base: `git fetch origin && git rebase origin/<base>`, then `git push --force-with-lease`. On conflict, resolve keeping each side's intent — your branch's changes stay held to scope.
 
 Done when: the branch sits on the base tip and the remote matches.
 

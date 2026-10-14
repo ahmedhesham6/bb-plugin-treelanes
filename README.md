@@ -1,17 +1,87 @@
-# Workflow Board for bb
+# Treelanes
 
-Workflow Board adds a kanban panel to bb. Each card is one Git worktree. The
-card lists all unsettled threads in that worktree.
+Treelanes is a bb plugin for work in Git worktrees. It has two parts:
 
-The board ignores threads outside Git worktrees. It also hides each thread that
-remains on the T3 Sidebar Settled shelf. A card leaves the board when its
-worktree has no unsettled threads. New work or attention makes a settled thread
-appear again.
+- **Board**: a kanban panel. Each card is one Git worktree, with all its
+  unsettled threads. Cards move through design, build, review, and merge.
+- **Sidebar**: a thread list with one main thread per worktree. Select a main
+  thread to show its children.
+
+## Install
+
+```sh
+bb plugin install git:https://github.com/ahmedhesham6/bb-plugin-treelanes
+```
+
+To build from a checkout:
+
+```sh
+npm install
+npm test
+npm run typecheck
+npm run build
+bb plugin install .
+```
+
+## First run
+
+1. Open **Treelanes** in the bb navigation to see the board.
+2. Choose **Treelanes** under Settings → Appearance → Sidebar to use the
+   sidebar. This choice applies to the current client.
+3. Open Settings → Plugins → Treelanes and set the **Task map** (see below).
+   You can leave every choice at "Orchestrator chooses".
+
+A new install starts empty. Threads appear on the board when they are in a
+Git worktree and are not settled.
+
+## Move from workflow-board and worktree-sidebar
+
+Treelanes replaces the earlier `workflow-board` and `worktree-sidebar` plugins.
+To keep their data:
+
+1. Install Treelanes. Do not use it yet.
+2. Run `bb treelanes import`. It copies board cards, tasks, receipts, launch
+   records, Settled and Snoozed state, thread order, main threads, and
+   display titles in one transaction.
+3. Disable the old plugins: `bb plugin disable workflow-board` and
+   `bb plugin disable worktree-sidebar`.
+4. Choose Treelanes as the sidebar.
+
+The import reads the old plugin databases and does not change them. It refuses
+a Treelanes install that already has data, and a second run does nothing.
+Disable the old plugins without uninstalling them, so their data stays
+available.
+
+## Settings
+
+- **Task map**: a Settings section that lists the template steps of each task
+  kind (feature, bug fix, refactor, perf), with PR Watch when the target is a
+  pull request. Each step shows its stage, title, checks, and skills, with
+  harness, model, and effort dropdowns from the live catalogs of connected
+  harnesses. The orchestrator and automatic titles have their own rows. A
+  saved choice binds setup planning and validation for steps that have not
+  started; the board rejects a plan that changes it. Settings and
+  `bb treelanes health` report a saved choice that the live catalog cannot
+  run.
+  A saved orchestrator harness that differs from the initiating thread uses
+  a new orchestrator thread. Unset model and effort choices use that harness's
+  live catalog defaults.
+- **Automatic subthread titles**: off by default. When on, the harness and
+  model from the task map's titles row write short sidebar titles in a short
+  hidden thread. Custom names stay.
+- **Wait in Design before automatic delivery**, **Use the initiating thread as
+  orchestrator**, **Move finished Grilling to TDD**, **Move through
+  Implementation when work finishes**, **Simplify to PR thread**, and the
+  stage prompts.
 
 ## Board
 
+The board ignores threads outside Git worktrees. It hides each Settled
+Thread. A card leaves the board when its worktree has no unsettled threads.
+New work or attention makes a settled thread appear again.
+
 1. Tickets — a Linear ticket or work that you create.
-2. Design — shape the work with Wayfinder or Grilling.
+2. Design — shape the work with Grilling.
 3. Implementation — one large group with three steps:
    - TDD — define seams, write tests, and build.
    - Quality Loop — run strict review until it has no findings.
@@ -33,37 +103,71 @@ Implementation with the move command.
 Automatic moves require a Completion Receipt from the Stage Owner. The board
 checks the task revision, stage revision, required check names, and worktree
 digest before each move. Missing or incomplete file data prevents a move.
-A completion marker alone does not advance work. Done requires BB to confirm
+A completion marker alone does not advance work. Done requires bb to confirm
 a merged pull request whose head branch matches the worktree.
 
 Select a worktree card to open its newest unsettled thread in the right pane.
 Select a listed thread to open that thread. The pane also has an action that
-opens the full thread.
+opens the full thread. The board also has search, All, Active, and Attention
+views, a New work action, stage buttons in the thread pane, and a small-screen
+layout.
 
-The board also has search, All, Active, and Attention views, a New work action,
-stage buttons in the thread pane, and a small-screen layout.
+## Sidebar
+
+One main thread per Git worktree. Select a main thread to show its children.
+Select another worktree to collapse the previous group. Selecting a child keeps
+its group open. A collapsed main row shows input requests, failures, running
+threads, and unread counts. The sidebar reveals hidden agent children in the
+same Git Worktree when they link to a visible thread. Internal plugin threads
+stay hidden. Grouping keeps parent links.
+
+Use the row menu for split, read state, pin, archive, delete, settle, snooze,
+restore, or "Use as main thread". Drag a main row to move its worktree. Drag a
+child to change its order within that worktree. Focus the drag handle and use
+arrow keys for keyboard movement.
+
+A saved main-thread choice takes priority. For a new group, the sidebar prefers
+the board's initiating thread, then the oldest root in the worktree, then its
+oldest visible member. Pinned children raise their worktree into Pinned.
+Snoozed and Settled state remains per thread. A group stays in Inbox while any
+member has active work.
+
+The thread header shows parent and child chips. PR badges use bb's branch
+lookup; a branch without a PR has no badge.
+
+## CLI
+
+```sh
+bb treelanes import
+bb treelanes stages
+bb treelanes show [project-id]
+bb treelanes move <stage> [thread-id] [note]
+bb treelanes context
+bb treelanes task '<JSON>'
+bb treelanes complete '<JSON>'
+bb treelanes health [project-id]
+bb treelanes reconcile [project-id]
+bb treelanes pause [environment-id]
+bb treelanes resume [environment-id]
+bb treelanes snapshot <environment-id>
+bb treelanes list-main
+bb treelanes main <project> <environment> <thread>
+bb treelanes titles
+bb treelanes generate-titles
+```
+
+Run `bb treelanes help` for the full list, including the delivery commands.
+
+The sidebar code started as a copy of an MIT-licensed sidebar plugin. Its
+license notice is in [sidebar/LICENSE](sidebar/LICENSE).
 
 ## Agent use
 
-The plugin adds the `workflow_board_move_card` tool. The agent gives it a stage
+The plugin adds the `treelanes_move_card` tool. The agent gives it a stage
 and can add a short note. The plugin finds the worktree from the current thread
 and moves that worktree card.
 
-Agents can also use these commands:
-
-```sh
-bb workflow-board stages
-bb workflow-board show [project-id]
-bb workflow-board move <stage> [thread-id] [note]
-bb workflow-board context
-bb workflow-board task '<JSON>'
-bb workflow-board complete '<JSON>'
-bb workflow-board health [project-id]
-bb workflow-board reconcile [project-id]
-bb workflow-board pause [environment-id]
-bb workflow-board resume [environment-id]
-bb workflow-board snapshot <environment-id>
-```
+Agents can also use the CLI commands above.
 
 The valid stage IDs are `tickets`, `design`, `tdd`, `quality`, `simplify`,
 `review`, `pr`, and `done`.
@@ -122,44 +226,30 @@ that pause and checks its saved state. Recovery does not restart an idle worker
 that has no receipt, override pending input, or dispatch duplicate work while
 threads are active. PR Watch moves to Done after BB confirms the merge.
 
-## Install and check
-
-```sh
-npm install
-npm test
-npm run typecheck
-npm run build
-bb plugin install .
-```
-
-The plugin stores each stage by worktree environment ID. It keeps old
-thread-card data only to carry an existing stage into the new worktree card.
-
-
 ## Task setups
 
 New tasks can save a `setup` instead of `deliveryStages`. Each step has a stable ID, title, stage, instructions, checks, and explicit execution choices. `execution.providerId` selects the harness. The model and effort must match the live provider catalog. Skills must exist and match the provider, or have no provider restriction. The board rejects missing and ambiguous choices without a default substitute.
 
-For explicit manual setup, use `bb workflow-board catalog [provider-id] [skill-query]` to inspect choices, save the task, then run `bb workflow-board start` once. Automatic delivery lets the board plan and dispatch. The board stores the resolved choice before dispatch. `execution.selectedSkills` holds skill references returned by board context; the SDK has no skills launch field and this does not restrict tools. Existing permission settings still apply.
+For explicit manual setup, use `bb treelanes catalog [provider-id] [skill-query]` to inspect choices, save the task, then run `bb treelanes start` once. Automatic delivery lets the board plan and dispatch. The board stores the resolved choice before dispatch. `execution.selectedSkills` holds skill references returned by board context; the SDK has no skills launch field and this does not restrict tools. Existing permission settings still apply.
 
 A setup has one to 24 steps. It can repeat a stage, add a check step, or omit work the task does not need. PR Watch can only be last. Each other step needs at least one check. Common and stage checks remain additive. The current owner can revise remaining work. Completed steps stay fixed. Prepared execution settings stay fixed; a selection that failed before dispatch can be corrected by the task owner. A changed plan needs a fresh receipt.
 
 The card stage, active step, task versions, launch attempts, resolved settings, and receipts survive reload. Recovery resumes accepted completion and failed launches under the existing pause and retry limits. A stage change and its pending launch share a transaction. Each step, including a repeated stage, gets a new stage version.
 
-`bb workflow-board history` shows the latest ten task versions. `bb workflow-board playbooks [project-id]` shows the latest five checked setups. A checked setup is an example, not an approval or a receipt for new files. A PR setup enters this list only after a verified matching merge. Done also requires the custom setup to finish. Code-only setups keep their last board stage.
+`bb treelanes history` shows the latest ten task versions. `bb treelanes playbooks [project-id]` shows the latest five checked setups. A checked setup is an example, not an approval or a receipt for new files. A PR setup enters this list only after a verified matching merge. Done also requires the custom setup to finish. Code-only setups keep their last board stage.
 
 The delivery skill chooses the initial setup from the request, repo rules, live catalog, and prior results. Workers adapt future steps when findings change the needed work. This is agent judgment with saved checks, not a learned model ranking or automatic tool isolation.
 
 
 ## Automatic delivery
 
-For a new authorized task with accepted interfaces, call `workflow_board_deliver` or `bb workflow-board deliver '<json>'` with `{ "stage": "tdd", "task": { ... } }`. The task uses the existing outcome, scope, decisions, constraints, confirmations, checks, and allowed actions. Omit setup and deliveryStages. The board saves the request, starts a visible task orchestrator, validates its proposal, and dispatches the first step after setup is idle. The caller ends its turn after queuing. An identical repeat does not start another setup worker.
+For a new authorized task with accepted interfaces, call `treelanes_deliver` or `bb treelanes deliver '<json>'` with `{ "stage": "tdd", "task": { ... } }`. The task uses the existing outcome, scope, decisions, constraints, confirmations, checks, and allowed actions. Omit setup and deliveryStages. The board saves the request, starts a visible task orchestrator, validates its proposal, and dispatches the first step after setup is idle. The caller ends its turn after queuing. An identical repeat does not start another setup worker.
 
-The setup worker uses the initiating thread's provider, model, effort, and permission limit. It reads current task context and the live catalog, consults checked setups when useful, then submits `workflow_board_apply_setup`. The board accepts only a setup proposal; it retains the saved task authority. Each step's provider, model, supported effort, and skill choices must resolve against live catalogs. Setup workers receive the board context, catalog, playbook, and apply tools from this plugin. The platform still exposes its normal tools; this is not a file sandbox.
+The setup worker uses the initiating thread's provider, model, effort, and permission limit. It reads current task context and the live catalog, consults checked setups when useful, then submits `treelanes_apply_setup`. The board accepts only a setup proposal; it retains the saved task authority. Each step's provider, model, supported effort, and skill choices must resolve against live catalogs. Setup workers receive the board context, catalog, playbook, and apply tools from this plugin. The platform still exposes its normal tools; this is not a file sandbox.
 
-`workflow_board_reopen` or `bb workflow-board reopen '{"taskRevision":2,"reason":"User requested changed work"}'` returns an unpaused automatic PR Watch task to Design. Only the saved orchestrator or current owner may call it at the user's request. It rejects stale revisions, pending setup, other live work, and pending input. It keeps task versions and receipts, clears the active setup, and gives Design to the original orchestrator. Update the full task in Design, then complete Design or use explicit user Start. The board plans fresh steps in the same orchestrator and keeps PR Watch last. Reopen does not merge or close the existing PR.
+`treelanes_reopen` or `bb treelanes reopen '{"taskRevision":2,"reason":"User requested changed work"}'` returns an unpaused automatic PR Watch task to Design. Only the saved orchestrator or current owner may call it at the user's request. It rejects stale revisions, pending setup, other live work, and pending input. It keeps task versions and receipts, clears the active setup, and gives Design to the original orchestrator. Update the full task in Design, then complete Design or use explicit user Start. The board plans fresh steps in the same orchestrator and keeps PR Watch last. Reopen does not merge or close the existing PR.
 
-`workflow_board_recover` or `bb workflow-board recover '{"reason":"...","nextAction":"..."}'` lets the current worker request a different plan for a concrete repair within the saved scope. Correct routine code, local test setup, and input errors in the same worker first. A recorded failed result requires `nextAction`; unchanged base or external failures do not justify another worker, and unresolved human decisions still block recovery. The worker ends its turn after an accepted recovery request. The board waits for idle state, then starts setup planning again. A failed turn does not trigger Plan Recovery or create another worker. At most two plan changes can occur for an automatic delivery. Each retains completed steps, the active step ID and stage, and every active check. Common task checks, scope, and actions remain unchanged. A new accepted plan gets new task and stage versions, so old receipts cannot advance it.
+`treelanes_recover` or `bb treelanes recover '{"reason":"...","nextAction":"..."}'` lets the current worker request a different plan for a concrete repair within the saved scope. Correct routine code, local test setup, and input errors in the same worker first. A recorded failed result requires `nextAction`; unchanged base or external failures do not justify another worker, and unresolved human decisions still block recovery. The worker ends its turn after an accepted recovery request. The board waits for idle state, then starts setup planning again. A failed turn does not trigger Plan Recovery or create another worker. At most two plan changes can occur for an automatic delivery. Each retains completed steps, the active step ID and stage, and every active check. Common task checks, scope, and actions remain unchanged. A new accepted plan gets new task and stage versions, so old receipts cannot advance it.
 
 Setup requests have durable pending, starting, started, applied, stale, and blocked states. A conditional SQL claim prevents duplicate setup starts. A lost spawn response keeps its claim while recovery searches for the worker by its saved title. Setup starts get at most two attempts per request. Once a thread exists, the board keeps it. A failed turn uses same-thread retry; an idle worker remains available to submit its corrected plan. Pending input and paused work prevent dispatch. Exhausted setup attempts remain blocked and appear in health; they do not retry forever.
 
@@ -215,8 +305,4 @@ Stage prompts name `/delivery` and the stage skill, then give assignment IDs. Wo
 
 Delivery routes setup, task changes, recovery, and PR Watch to separate references. Resumed workers use `bb skill show` for current files because their cached skill copy may be old. Setup and blocker prompts also use these references. Setup context omits a workspace digest so an orchestrator can inspect the task during a capture failure; stage completion still requires full current evidence.
 
-Workflow Board starts orchestrators and stage workers with explicit visible status so a hidden parent cannot hide current work from the sidebar. Settled and archived states remain separate.
-
-## Sidebar lifecycle provider
-
-`bb plugin config workflow-board set lifecycleProvider worktree-sidebar` selects Worktree Sidebar for Settled state. The default is `t3sidebar`. Import the old sidebar state before changing this setting. The board reads and writes only the selected provider. `listMainThreads` is a read-only RPC with no input fields. It returns initiating thread IDs with project and environment IDs for sidebar main-thread selection.
+Treelanes starts orchestrators and stage workers with explicit visible status so a hidden parent cannot hide current work from the sidebar. Settled and archived states remain separate.

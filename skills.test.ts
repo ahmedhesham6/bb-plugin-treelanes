@@ -19,7 +19,7 @@ describe("shipped skills", () => {
   });
 
   it("syncs sources, skips plugin-owned skills and leaves copies intact if a source is missing", () => {
-    const root = mkdtempSync(join(tmpdir(), "workflow-skill-sync-"));
+    const root = mkdtempSync(join(tmpdir(), "treelanes-skill-sync-"));
     const put = (path: string, contents: string, mode?: number) => {
       mkdirSync(dirname(join(root, path)), { recursive: true });
       writeFileSync(join(root, path), contents, { mode });
@@ -27,14 +27,14 @@ describe("shipped skills", () => {
     const commit = "a".repeat(40);
     try {
       put("scripts/sync-skills.sh", read("./scripts/sync-skills.sh"));
-      put("skills/SOURCES.md", `| tdd | ${join(root, "local/tdd")} | none |\n| delivery | plugin | none |\n`);
+      put("skills/SOURCES.md", "| tdd | local:tdd | none |\n| delivery | plugin | none |\n");
       put("skills/tdd/SKILL.md", "Old TDD copy");
       put("skills/delivery/SKILL.md", "Plugin delivery");
       put("pstack/LICENSE", "MIT license");
       // Replace the network clone; file copies use the real rsync command.
       put("bin/git", `#!/usr/bin/env bash\nif [[ $1 == clone ]]; then cp -R "$PSTACK_FIXTURE/." "\${@: -1}"; else echo ${commit}; fi\n`, 0o755);
       const env = { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH}`,
-        PSTACK_FIXTURE: join(root, "pstack") };
+        PSTACK_FIXTURE: join(root, "pstack"), SKILLS_SOURCE: join(root, "local") };
       const sync = () => execFileSync("bash", [join(root, "scripts/sync-skills.sh")], { env, stdio: "pipe" });
       expect(() => sync()).toThrow(/Missing source/);
       expect(readFileSync(join(root, "skills/tdd/SKILL.md"), "utf8")).toBe("Old TDD copy");

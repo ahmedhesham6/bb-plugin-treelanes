@@ -150,9 +150,9 @@ describe("setup worker prompt", () => {
       stage: "tdd", activeStepId: null, recoveryReason: null });
     expect(prompt).toContain("/delivery");
     expect(prompt).toContain("references/orchestration.md");
-    expect(prompt).toContain("workflow_board_get_context");
-    expect(prompt).toContain("workflow_board_apply_setup");
-    expect(prompt).toContain("workflow_board_catalog");
+    expect(prompt).toContain("treelanes_get_context");
+    expect(prompt).toContain("treelanes_apply_setup");
+    expect(prompt).toContain("treelanes_catalog");
     expect(prompt).toContain("persistent task orchestrator");
     expect(prompt).toMatch(/do not edit product code/i);
     expect(prompt).toContain('"requestId":12');
@@ -167,7 +167,7 @@ describe("setup worker prompt", () => {
     const prompt = buildSetupPrompt(input);
     expect(prompt.length).toBeLessThan(3000);
     expect(prompt).not.toContain("noisy");
-    expect(prompt).toContain("workflow_board_get_context");
-    expect(prompt).toContain("workflow_board_catalog");
+    expect(prompt).toContain("treelanes_get_context");
+    expect(prompt).toContain("treelanes_catalog");
   });
 });

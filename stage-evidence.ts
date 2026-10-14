@@ -598,7 +598,7 @@ async function captureSnapshot(
 }
 
 function frameSnapshotMetadata(hash: Hash, snapshot: WorkspaceSnapshot): void {
-  frameText(hash, "format", "workflow-board-workspace-v1");
+  frameText(hash, "format", "treelanes-workspace-v1");
   frameText(hash, "head", snapshot.headSha);
   frameText(hash, "merge-base-branch", snapshot.mergeBaseBranch);
   frameText(hash, "merge-base-ref", snapshot.baseRef);

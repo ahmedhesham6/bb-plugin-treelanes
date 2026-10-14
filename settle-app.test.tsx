@@ -15,7 +15,7 @@ function board(stage: "design" | "quality" | "review", settled = false) {
   }] };
 }
 
-describe("Settle from Workflow Board", () => {
+describe("Settle from the board", () => {
   it.each(["design", "quality", "review"] as const)("settles from %s without opening the thread and removes the empty card", async (stage) => {
     const app = await loadPluginApp(() => import("./app"));
     let settled = false;
@@ -49,12 +49,12 @@ describe("Settle from Workflow Board", () => {
       context: { projectId: "project-one", threadId: null },
       rpc: {
         getBoard: () => board("design"),
-        settleThread: () => { throw new Error("T3 Sidebar unavailable"); },
+        settleThread: () => { throw new Error("Sidebar state unavailable"); },
       },
     });
     try {
       fireEvent.click(await slot.findByRole("button", { name: "Settle Finished child" }));
-      expect((await slot.findByRole("alert")).textContent).toBe("T3 Sidebar unavailable");
+      expect((await slot.findByRole("alert")).textContent).toBe("Sidebar state unavailable");
       expect(slot.getByRole("button", { name: "Finished child" })).toBeTruthy();
       expect((slot.getByRole("button", { name: "Settle Finished child" }) as HTMLButtonElement).disabled).toBe(false);
       expect(slot.queryByTestId("bb-thread-chat")).toBeNull();

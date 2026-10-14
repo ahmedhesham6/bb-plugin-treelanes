@@ -27,7 +27,6 @@ export const stepExecutionSchema = z
     reasoningLevel: z.enum(REASONING_LEVELS),
     skills: z.array(boundedName).max(MAX_SKILLS),
     reason: boundedReason,
-    modelOverrideReason: boundedReason.optional().describe("Why this provider/model/effort is better for this task than the current modelMap preference. Required to override a preference."),
   })
   .strict();
 
@@ -48,7 +47,6 @@ export type ResolvedStepExecution = {
   reasoningLevel: ReasoningLevel;
   selectedSkills: SelectedStepSkill[];
   reason: string;
-  modelOverrideReason?: string;
 };
 
 export class StepExecutionError extends Error {
@@ -210,15 +208,8 @@ export async function resolveStepExecution(
   sdk: BbPluginApi["sdk"],
   routing: { environmentId: string; projectId: string },
   choice: StepExecutionChoice,
-  preference?: { providerId: string | null; model: string | null; reasoningLevel?: string },
 ): Promise<ResolvedStepExecution> {
-  const requestedChoice = stepExecutionSchema.parse(choice);
-  const parsedChoice = stepExecutionSchema.parse(requestedChoice.modelOverrideReason || !preference ? requestedChoice : {
-    ...requestedChoice,
-    providerId: preference.providerId ?? requestedChoice.providerId,
-    model: preference.model ?? requestedChoice.model,
-    reasoningLevel: preference.reasoningLevel ?? requestedChoice.reasoningLevel,
-  });
+  const parsedChoice = stepExecutionSchema.parse(choice);
   if (routing.environmentId.length === 0) {
     reject("environmentId is required");
   }
@@ -251,6 +242,5 @@ export async function resolveStepExecution(
     reasoningLevel: parsedChoice.reasoningLevel,
     selectedSkills,
     reason: parsedChoice.reason,
-    ...(parsedChoice.modelOverrideReason ? { modelOverrideReason: parsedChoice.modelOverrideReason } : {}),
   };
 }

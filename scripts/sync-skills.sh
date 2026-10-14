@@ -15,7 +15,8 @@ while IFS='|' read -r _ name source _; do
   case $source in
     pstack:*) from=$pstack/${source#pstack:} ;;
     plugin) continue ;;
-    *) from=${source/#\~/$HOME} ;;
+    local:*) from=${SKILLS_SOURCE:?Set SKILLS_SOURCE to the folder with local skill sources}/${source#local:} ;;
+    *) from=$source ;;
   esac
   if [[ ! -d "$from" ]]; then
     echo "Missing source: $from" >&2

@@ -2,13 +2,13 @@
 
 ## New automatic task
 
-Read the request and repository rules. Register this thread as the task orchestrator: submit `workflow_board_deliver` or `bb workflow-board deliver '<JSON>'` once:
+Read the request and repository rules. Register this thread as the task orchestrator: submit `treelanes_deliver` or `bb treelanes deliver '<JSON>'` once:
 
 ```json
 {"stage":"design","task":{"outcome":"...","scope":[],"decisions":[],"constraints":[],"testInterfaces":[],"decisionInputs":[],"confirmations":[],"requiredChecks":[],"allowedActions":[]}}
 ```
 
-Fill the arrays from the accepted request and exact repository checks. The board saves the task and waits in Design. This thread handles design with `/grilling` and stays as orchestrator; do not create an orchestrator child. Keep implementation checks in `requiredChecks` and design checks in `stageChecks.design`. After a checked Design or Grilling completion, the board sends the setup assignment to this same thread. If the user explicitly asks to start, call `workflow_board_start` once or use `bb workflow-board start`; never infer this instruction. A user move from Design to TDD also starts setup. Then follow the orchestration reference and let the board dispatch implementation children.
+Fill the arrays from the accepted request and exact repository checks. The board saves the task and waits in Design. This thread handles design with `/grilling` and stays as orchestrator; do not create an orchestrator child. Keep implementation checks in `requiredChecks` and design checks in `stageChecks.design`. After a checked Design or Grilling completion, the board sends the setup assignment to this same thread. If the user explicitly asks to start, call `treelanes_start` once or use `bb treelanes start`; never infer this instruction. A user move from Design to TDD also starts setup. Then follow the orchestration reference and let the board dispatch implementation children.
 
 Delivery defaults to `deliveryTarget: "pr"`. Use `"local"` only for an explicit task restriction against a PR, and record its source. Neither target permits merge or deployment without authority.
 
@@ -18,7 +18,7 @@ Retry with the same complete payload and array order. The board returns the exis
 
 If the user requests new implementation while PR Watch is active, use the Reopen path below. Routine PR fixes still belong to the PR owner.
 
-Read fresh context. Only `ownerThreadId` may save the full task through `workflow_board_set_task` or `bb workflow-board task '<JSON>'`. Other threads send the authorized change and source message to that owner with `bb thread tell`, then end. If no owner exists, report the exact blocker.
+Read fresh context. Only `ownerThreadId` may save the full task through `treelanes_set_task` or `bb treelanes task '<JSON>'`. Other threads send the authorized change and source message to that owner with `bb thread tell`, then end. If no owner exists, report the exact blocker.
 
 Retain the full task, including future steps. Add, remove, or reorder future work within scope. Keep completed step IDs, stages, and order, and the active step ID and stage. The board retains completed details if an update abbreviates them. Once dispatch is prepared, keep the active execution choice fixed; put a different choice in a future step. Keep PR Watch last for a PR-targeted task.
 
@@ -28,7 +28,7 @@ Existing tasks may use `deliveryStages` and `stageChecks` instead of `setup`. Pr
 
 ## Reopen PR Watch
 
-When the user requests changed work through a new workflow cycle, the saved orchestrator or current owner calls `workflow_board_reopen` or `bb workflow-board reopen '<JSON>'` with the current `taskRevision` and a `reason` that cites the request. Read context first. Reopen requires an unpaused automatic task in PR Watch; other running work and pending input must settle first.
+When the user requests changed work through a new workflow cycle, the saved orchestrator or current owner calls `treelanes_reopen` or `bb treelanes reopen '<JSON>'` with the current `taskRevision` and a `reason` that cites the request. Read context first. Reopen requires an unpaused automatic task in PR Watch; other running work and pending input must settle first.
 
 Reopen returns the same task to Design under its original orchestrator. It keeps the prior task versions and receipts as history, clears the active setup, and creates a fresh setup request. It does not merge or close the PR, change the code, or start a worker.
 
