@@ -1837,9 +1837,9 @@ export default async function plugin(bb: BbPluginApi) {
     async execute(input, context) { return JSON.stringify(await requestPlanRecovery(context.threadId, input.reason, input.nextAction)); },
   });
 
-  // The setup worker gets no plugin skills; board threads get every skill in skills/.
+  // The setup worker gets only the skills its instructions name; board threads get every skill in skills/.
   bb.agents.configure(context => setupAutomation.isPlanner(context.thread.id, context.thread.title) ? {
-    tools: ["workflow_board_reopen", "workflow_board_apply_setup", "workflow_board_catalog", "workflow_board_get_context", "workflow_board_playbooks"], skills: [],
+    tools: ["workflow_board_reopen", "workflow_board_apply_setup", "workflow_board_catalog", "workflow_board_get_context", "workflow_board_playbooks"], skills: ["delivery", "ponytail"],
     instructions: "Use /delivery as the persistent task orchestrator. Follow the current assignment: submit setup or guide the existing child. The board owns dispatch and card moves; do not edit product code.",
   } : ({
     tools: ["workflow_board_reopen", "workflow_board_move_card", "workflow_board_get_context", "workflow_board_set_task", "workflow_board_complete_stage", "workflow_board_start", "workflow_board_catalog", "workflow_board_playbooks", "workflow_board_deliver", "workflow_board_recover"],

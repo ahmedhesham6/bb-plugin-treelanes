@@ -367,7 +367,7 @@ describe("saved stage evidence", () => {
     await expect(t.context()).rejects.toThrow(/502|unavailable/);
   });
 
-  it("loads plugin skills for board threads but not for the setup worker", async () => {
+  it("loads plugin skills for board threads and only delivery and ponytail for the setup worker", async () => {
     const t = await setup(false);
     await t.harness.behavior.callAgentTool("workflow_board_deliver", { stage: "tdd", task: t.task }, t.agent);
     const configure = (thread: typeof t.root) => t.harness.behavior.resolveAgentConfiguration({
@@ -376,7 +376,7 @@ describe("saved stage evidence", () => {
       environment: { id: "env", name: "test", path: "/srv/worktree", workspaceProvisionType: "managed-worktree", branchName: "feat/test" },
       host: { id: "host", name: "Host" }, provider: { id: "codex", model: "small" }, origin: { kind: null, pluginId: null },
     });
-    expect((await configure(t.threads[1]!)).skills).toEqual([]);
+    expect((await configure(t.threads[1]!)).skills).toEqual(["delivery", "ponytail"]);
     const board = await configure(t.root);
     expect(board.tools.length).toBeGreaterThan(0);
     expect(board.skills).toEqual(shippedSkills);
