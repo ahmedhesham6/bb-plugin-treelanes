@@ -140,9 +140,6 @@ bb treelanes generate-titles
 
 Run `bb treelanes help` for the full list, including the delivery commands.
 
-The sidebar code started as a copy of an MIT-licensed sidebar plugin. Its
-license notice is in [sidebar/LICENSE](sidebar/LICENSE).
-
 ## Agent use
 
 The plugin adds the `treelanes_move_card` tool. The agent gives it a stage
@@ -288,3 +285,31 @@ Stage prompts name `/delivery` and the stage skill, then give assignment IDs. Wo
 Delivery routes setup, task changes, recovery, and PR Watch to separate references. Resumed workers use `bb skill show` for current files because their cached skill copy may be old. Setup and blocker prompts also use these references. Setup context omits a workspace digest so an orchestrator can inspect the task during a capture failure; stage completion still requires full current evidence.
 
 Treelanes starts orchestrators and stage workers with explicit visible status so a hidden parent cannot hide current work from the sidebar. Settled and archived states remain separate.
+
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+before you start.
+
+## Credits
+
+- The sidebar design takes ideas from the sidebar in
+  [T3 Code](https://github.com/pingdotgg/t3code).
+- The sidebar code started as a copy of an MIT-licensed sidebar plugin by
+  Michael Yong. Its license notice is in [sidebar/LICENSE](sidebar/LICENSE).
+- The shipped skills come from these authors. Each is under the MIT license,
+  and [skills/SOURCES.md](skills/SOURCES.md) lists the source of each skill:
+  - Matt Pocock, [mattpocock/skills](https://github.com/mattpocock/skills):
+    grilling, tdd, codebase-design, diagnosing-bugs, and code-review.
+  - HumanLayer, [humanlayer/skills](https://github.com/humanlayer/skills):
+    show-me.
+  - Cursor,
+    [cursor-team-kit](https://github.com/cursor/plugins/tree/main/cursor-team-kit):
+    thermo-nuclear-code-quality-review.
+  - Michael Yong, [bb](https://github.com/get-bb/bb): babysit-pr.
+  - backnotprop, [pstack](https://github.com/backnotprop/pstack): the
+    principle skills and benchmark-checklist.
+
+## License
+
+[MIT](LICENSE)

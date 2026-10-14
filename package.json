@@ -2,6 +2,11 @@
   "name": "bb-plugin-treelanes",
   "version": "0.1.0",
   "description": "Git worktree board and sidebar: track each worktree through design, build, review and merge.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahmedhesham6/bb-plugin-treelanes.git"
+  },
   "type": "module",
   "scripts": {
     "build": "bb plugin build",

@@ -3,9 +3,22 @@
 Each skill folder here is an unchanged copy of its source. Do not edit copied
 files. To upgrade, run `scripts/sync-skills.sh` and review the diff.
 
-The pstack skills come from <https://github.com/backnotprop/pstack> under the
-MIT license in [pstack-LICENSE](pstack-LICENSE). Local sources are not in Git,
-so they have no commit.
+Each copied skill keeps the MIT license of its upstream:
+
+- grilling, tdd, codebase-design, diagnosing-bugs and code-review:
+  <https://github.com/mattpocock/skills>, in
+  [mattpocock-skills-LICENSE](mattpocock-skills-LICENSE).
+- show-me: <https://github.com/humanlayer/skills>, in
+  [humanlayer-skills-LICENSE](humanlayer-skills-LICENSE).
+- thermo-nuclear-code-quality-review:
+  <https://github.com/cursor/plugins/tree/main/cursor-team-kit>, in
+  [cursor-team-kit-LICENSE](cursor-team-kit-LICENSE).
+- babysit-pr: the bb built-in skill from <https://github.com/get-bb/bb>, in
+  [bb-LICENSE](bb-LICENSE).
+- The pstack skills: <https://github.com/backnotprop/pstack>, in
+  [pstack-LICENSE](pstack-LICENSE).
+
+Local sources are not in Git, so they have no commit.
 
 Skills with source `plugin` have no other copy: this plugin owns them. Edit
 them here; the script leaves them alone. A `local:<name>` source is a folder
