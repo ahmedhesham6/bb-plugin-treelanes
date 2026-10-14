@@ -7,6 +7,12 @@ The pstack skills come from <https://github.com/backnotprop/pstack> under the
 MIT license in [pstack-LICENSE](pstack-LICENSE). Local sources are not in Git,
 so they have no commit.
 
+Before removing the BB user copies after install, retain their source folders
+in a directory outside `~/.bb/skills`. For later upgrades, run
+`scripts/sync-skills.sh /path/to/retained-sources`; that directory must contain
+`delivery/`, `ponytail/`, and `simplify/`. With no argument, the script uses
+`~/.bb/skills`. It checks all source folders before it changes any copy.
+
 | Skill | Source | Commit |
 | --- | --- | --- |
 | grilling | ~/.agents/skills/grilling | none |

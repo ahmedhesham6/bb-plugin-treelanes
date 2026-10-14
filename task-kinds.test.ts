@@ -51,11 +51,26 @@ describe("task kinds", () => {
     }
     expect(buildSetupPrompt(input)).not.toMatch(/template/i);
   });
+
+  it.each(["local", "pr"] as const)("keeps step requirements and later prompts intact after template edits for %s delivery", deliveryTarget => {
+    const input = { environmentId: "env", requestId: 1, taskRevision: 1, stage: "tdd", activeStepId: null,
+      recoveryReason: null, task: { kind: "bug-fix" as const, deliveryTarget } };
+    const prompt = buildSetupPrompt(input);
+    const steps = kindTemplate(input.task);
+    const rootCauseSkills = [...steps[1]!.skills];
+    steps[0]!.skills.pop();
+    expect(steps[1]!.skills).toEqual(rootCauseSkills);
+    steps[0]!.checks.length = 0;
+    steps[0]!.title = "Changed title";
+    steps.at(-1)!.skills.length = 0;
+    steps.length = 0;
+    expect(buildSetupPrompt(input)).toBe(prompt);
+  });
 });
 
 describe("kind template rules on a setup proposal", () => {
   const bugFix = taskContextSchema.parse(task("bug-fix"));
-  const fromTemplate = (): SetupPlan => ({ summary: "Bug fix.", steps: structuredClone(kindTemplate(bugFix)).map(({ skills, ...step }) =>
+  const fromTemplate = (): SetupPlan => ({ summary: "Bug fix.", steps: kindTemplate(bugFix).map(({ skills, ...step }) =>
     ({ ...step, execution: { providerId: "codex", model: "m", reasoningLevel: "low", skills, reason: "Fits." } })) });
   const edit = (change: (plan: SetupPlan) => void) => { const plan = fromTemplate(); change(plan); return plan; };
   const extra = { ...fromTemplate().steps[0]!, id: "notes", title: "Write notes" };

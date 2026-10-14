@@ -91,7 +91,8 @@ const templates: Record<TaskKind, TemplateStep[]> = {
 /** Template Setup Steps for a task's kind, in order; none without a kind. */
 export function kindTemplate(task: { kind?: TaskKind; deliveryTarget?: "pr" | "local" }): TemplateStep[] {
   if (!task.kind) return [];
-  return task.deliveryTarget === "pr" ? [...templates[task.kind], pr] : templates[task.kind];
+  const steps = task.deliveryTarget === "pr" ? [...templates[task.kind], pr] : templates[task.kind];
+  return steps.map(step => ({ ...step, checks: [...step.checks], skills: [...step.skills] }));
 }
 
 /**
