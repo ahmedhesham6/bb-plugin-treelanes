@@ -210,6 +210,7 @@ function WorkCard({
   selected,
   showProject,
   onOpen,
+  onSettle,
   onNewThread,
   onReview,
   onStartThread,
@@ -222,6 +223,7 @@ function WorkCard({
   selected: boolean;
   showProject: boolean;
   onOpen: (threadId: string) => void;
+  onSettle: (threadId: string) => Promise<void>;
   onNewThread: (card: Card) => void;
   onReview: (card: Card) => void;
   onStartThread: (card: Card) => void;
@@ -230,6 +232,24 @@ function WorkCard({
 }) {
   const liveWork = cardHasLiveWork(card);
   const needsAttention = cardNeedsAttention(card);
+  const pendingSettles = useRef(new Set<string>());
+  const [settling, setSettling] = useState(() => new Set<string>());
+  const [settleError, setSettleError] = useState<string | null>(null);
+
+  async function settle(threadId: string) {
+    if (pendingSettles.current.has(threadId)) return;
+    pendingSettles.current.add(threadId);
+    setSettling(new Set(pendingSettles.current));
+    setSettleError(null);
+    try {
+      await onSettle(threadId);
+    } catch (error) {
+      setSettleError(error instanceof Error ? error.message : "Could not settle the thread.");
+    } finally {
+      pendingSettles.current.delete(threadId);
+      setSettling(new Set(pendingSettles.current));
+    }
+  }
 
   return (
     <article
@@ -334,37 +354,62 @@ function WorkCard({
           </div>
           <div className="divide-y divide-border/70">
             {card.threads.map((thread) => (
-              <button
-                key={thread.id}
-                type="button"
-                onClick={() => onOpen(thread.id)}
-                className={cn(
-                  "group/thread flex min-h-10 w-full items-center gap-2 px-2 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-background hover:text-foreground focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                  thread.parentThreadId && "pl-5",
-                )}
-              >
-                <span
+              <div key={thread.id} className="flex min-w-0 items-center">
+                <button
+                  type="button"
+                  onClick={() => onOpen(thread.id)}
                   className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    thread.hasPendingInteraction
-                      ? "bg-destructive"
-                      : statusClass(thread.status),
+                    "group/thread flex min-h-11 min-w-0 flex-1 items-center gap-2 px-2 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-background hover:text-foreground focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                    thread.parentThreadId && "pl-5",
                   )}
-                />
-                <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-                {thread.hasPendingInteraction ? (
-                  <Icon
-                    name="AlertCircle"
-                    className="size-3.5 shrink-0 text-destructive"
-                    aria-label="Waiting for you"
+                >
+                  <span
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      thread.hasPendingInteraction
+                        ? "bg-destructive"
+                        : statusClass(thread.status),
+                    )}
                   />
-                ) : null}
-                <Icon
-                  name="ArrowUpRight"
-                  className="size-3.5 shrink-0 opacity-0 transition-opacity group-hover/thread:opacity-70 group-focus-within/thread:opacity-70"
-                  aria-hidden="true"
-                />
-              </button>
+                  <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+                  {thread.hasPendingInteraction ? (
+                    <Icon
+                      name="AlertCircle"
+                      className="size-3.5 shrink-0 text-destructive"
+                      aria-label="Waiting for you"
+                    />
+                  ) : null}
+                  <Icon
+                    name="ArrowUpRight"
+                    className="size-3.5 shrink-0 opacity-0 transition-opacity group-hover/thread:opacity-70 group-focus-within/thread:opacity-70"
+                    aria-hidden="true"
+                  />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Settle ${thread.title}`}
+                  aria-busy={settling.has(thread.id)}
+                  title={
+                    settling.has(thread.id)
+                      ? "Settling thread…"
+                      : thread.canSettle
+                        ? "Settle thread"
+                        : "Wait for live work and pending questions to finish"
+                  }
+                  disabled={saving || !thread.canSettle || settling.has(thread.id)}
+                  className="flex size-11 shrink-0 items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void settle(thread.id);
+                  }}
+                >
+                  <Icon
+                    name={settling.has(thread.id) ? "Loading" : "CircleCheck"}
+                    className="size-4"
+                    aria-hidden="true"
+                  />
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -396,9 +441,9 @@ function WorkCard({
           </span>
         </div>
 
-        {error ? (
+        {settleError || error ? (
           <p role="alert" className="mt-2 text-pretty text-xs text-destructive">
-            {error}
+            {settleError || error}
           </p>
         ) : null}
       </div>
@@ -414,6 +459,7 @@ function CardStack({
   selectedThreadId,
   showProject,
   onOpen,
+  onSettle,
   onNewThread,
   onReview,
   onStartThread,
@@ -427,6 +473,7 @@ function CardStack({
   selectedThreadId: string | null;
   showProject: boolean;
   onOpen: (threadId: string) => void;
+  onSettle: (threadId: string) => Promise<void>;
   onNewThread: (card: Card) => void;
   onReview: (card: Card) => void;
   onStartThread: (card: Card) => void;
@@ -450,6 +497,7 @@ function CardStack({
       selected={card.threads.some((thread) => thread.id === selectedThreadId)}
       showProject={showProject}
       onOpen={onOpen}
+      onSettle={onSettle}
       onNewThread={onNewThread}
       onReview={onReview}
       onStartThread={onStartThread}
@@ -469,6 +517,7 @@ function StageColumn({
   selectedThreadId,
   showProject,
   onOpen,
+  onSettle,
   onNewThread,
   onReview,
   onStartThread,
@@ -487,6 +536,7 @@ function StageColumn({
   selectedThreadId: string | null;
   showProject: boolean;
   onOpen: (threadId: string) => void;
+  onSettle: (threadId: string) => Promise<void>;
   onNewThread: (card: Card) => void;
   onReview: (card: Card) => void;
   onStartThread: (card: Card) => void;
@@ -532,6 +582,7 @@ function StageColumn({
           selectedThreadId={selectedThreadId}
           showProject={showProject}
           onOpen={onOpen}
+          onSettle={onSettle}
           onNewThread={onNewThread}
           onReview={onReview}
           onStartThread={onStartThread}
@@ -651,6 +702,12 @@ function WorkflowBoard({ subPath }: { subPath: string }) {
   const openThread = useCallback((threadId: string) => {
     setOpenThreadId(threadId);
   }, []);
+
+  const settleThread = useCallback(async (threadId: string) => {
+    await rpc.call("settleThread", { threadId });
+    setOpenThreadId((current) => current === threadId ? null : current);
+    await load();
+  }, [load, rpc]);
 
   const moveCard = useCallback(
     async (environmentId: string, stage: StageId) => {
@@ -1059,6 +1116,7 @@ function WorkflowBoard({ subPath }: { subPath: string }) {
                     selectedThreadId={openThreadId}
                     showProject={projectId === null}
                     onOpen={openThread}
+                    onSettle={settleThread}
                     onNewThread={(card) =>
                       navigate.toPluginPanel("board", {
                         subPath: `new-thread/${encodeURIComponent(card.environmentId)}`,
@@ -1206,6 +1264,7 @@ function WorkflowBoard({ subPath }: { subPath: string }) {
                                   selectedThreadId={openThreadId}
                                   showProject={projectId === null}
                                   onOpen={openThread}
+                                  onSettle={settleThread}
                                   onNewThread={(card) =>
                                     navigate.toPluginPanel("board", {
                                       subPath: `new-thread/${encodeURIComponent(card.environmentId)}`,

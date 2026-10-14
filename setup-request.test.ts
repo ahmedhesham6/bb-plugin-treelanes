@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { taskContextSchema } from "./stage-evidence";
+import { completionEvidenceSchema, taskContextSchema } from "./stage-evidence";
 import type { SetupPlan, SetupStep } from "./setup-plan";
 import {
   buildSetupPrompt,
@@ -48,6 +48,22 @@ function task(
 }
 
 describe("setup proposal contract", () => {
+  it("uses the same bounded exact check names in saved tasks, stage checks, plans, and results", () => {
+    const name = "x".repeat(1024);
+    const setup = plan([step("first", { checks: [name] })]);
+    const saved = task({ requiredChecks: [name], stageChecks: { tdd: [name] }, setup });
+    expect(saved.requiredChecks).toEqual([name]);
+    const result = { stage: "tdd", stageUpdatedAt: 1, taskRevision: 0, workspaceDigest: "digest",
+      checks: [{ name, status: "passed", evidence: "Exact check passed" }],
+      decisionsResolved: true, openFindings: [], summary: "Checked" };
+    expect(completionEvidenceSchema.parse(result).checks[0]!.name).toBe(name);
+    const tooLong = name + "x";
+    expect(() => task({ requiredChecks: [tooLong] })).toThrow();
+    expect(() => task({ stageChecks: { tdd: [tooLong] } })).toThrow();
+    expect(setupProposalSchema.safeParse({ setup: plan([step("first", { checks: [tooLong] })]) }).success).toBe(false);
+    expect(completionEvidenceSchema.safeParse({ ...result, checks: [{ ...result.checks[0], name: tooLong }] }).success).toBe(false);
+  });
+
   it("accepts only a strict setup envelope", () => {
     const setup = plan([step("first")]);
 
@@ -67,14 +83,14 @@ describe("setup proposal contract", () => {
       .not.toThrow();
   });
 
-  it("rejects legacy delivery stages and an over-budget additive check set", () => {
+  it("rejects conflicting legacy delivery stages and an over-budget additive check set", () => {
     expect(() => validateSetupProposal(
       task({ deliveryStages: ["tdd", "quality", "pr"] }),
       plan([step("first")]),
       "tdd",
       null,
       false,
-    )).toThrow(/legacy.*deliveryStages|deliveryStages.*legacy/i);
+    )).toThrow(/deliveryStages.*conflicts/i);
 
     const checks = Array.from({ length: 128 }, (_, index) => `required-${index}`);
     expect(() => validateSetupProposal(
@@ -129,38 +145,29 @@ describe("setup proposal contract", () => {
 });
 
 describe("setup worker prompt", () => {
-  it("names the bounded setup-only APIs and carries the task inputs", () => {
-    const prompt = buildSetupPrompt({
-      task: task({ constraints: ["Use the requested provider and model exactly."] }),
-      stage: "tdd",
-      activeStepId: null,
-      recoveryReason: null,
-      catalog: { providers: ["codex"], models: ["gpt-test"], skills: ["delivery"] },
-      playbooks: [{ summary: "A checked setup" }],
-    });
-
+  it("routes setup to its skill and live context with the assignment identity", () => {
+    const prompt = buildSetupPrompt({ environmentId: "env", requestId: 12, taskRevision: 3,
+      stage: "tdd", activeStepId: null, recoveryReason: null });
+    expect(prompt).toContain("/delivery");
+    expect(prompt).toContain("references/orchestration.md");
+    expect(prompt).toContain("workflow_board_get_context");
     expect(prompt).toContain("workflow_board_apply_setup");
     expect(prompt).toContain("workflow_board_catalog");
-    expect(prompt).toContain("setup-only");
-    expect(prompt).toMatch(/do not edit files|no file edits/i);
-    expect(prompt).toMatch(/permission.*inherit/i);
-    expect(prompt).toContain("Use the requested provider and model exactly.");
-    expect(prompt).toContain("gpt-test");
-    expect(prompt).toMatch(/model defaults|do not.*model.*default/i);
+    expect(prompt).toContain("persistent task orchestrator");
+    expect(prompt).toMatch(/do not edit product code/i);
+    expect(prompt).toContain('"requestId":12');
+    expect(prompt).toContain('"taskRevision":3');
+    expect(prompt.length).toBeLessThan(1000);
   });
 
-  it("bounds untrusted catalog and playbook text", () => {
-    const prompt = buildSetupPrompt({
-      task: task(),
-      stage: "tdd",
-      activeStepId: "active",
-      recoveryReason: "r".repeat(20_000),
-      catalog: { noisy: "c".repeat(100_000) },
-      playbooks: { noisy: "p".repeat(100_000) },
-    });
-
-    expect(prompt.length).toBeLessThanOrEqual(32_768);
-    expect(prompt).toContain("workflow_board_apply_setup");
+  it("bounds recovery text and omits obsolete task and catalog copies", () => {
+    const input = { environmentId: "env", requestId: 12, taskRevision: 3, stage: "tdd",
+      activeStepId: "active", recoveryReason: "r".repeat(20_000),
+      task: task(), catalog: { noisy: "c".repeat(100_000) }, playbooks: { noisy: "p".repeat(100_000) } };
+    const prompt = buildSetupPrompt(input);
+    expect(prompt.length).toBeLessThan(3000);
+    expect(prompt).not.toContain("noisy");
+    expect(prompt).toContain("workflow_board_get_context");
     expect(prompt).toContain("workflow_board_catalog");
   });
 });

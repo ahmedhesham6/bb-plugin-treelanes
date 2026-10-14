@@ -2,7 +2,8 @@ import { z } from "zod";
 
 const stages = ["tdd", "quality", "simplify", "pr"] as const;
 const checkStages = ["design", "tdd", "quality", "simplify"] as const;
-const checkNames = z.array(z.string().trim().min(1).max(256)).max(128);
+export const checkNameSchema = z.string().trim().min(1).max(1024);
+const checkNames = z.array(checkNameSchema).max(128);
 
 export const deliveryStagesSchema = z.array(z.enum(stages)).min(1).max(4)
   .refine(plan => plan.every((stage, index) => index === 0 || stages.indexOf(stage) > stages.indexOf(plan[index - 1]!)),

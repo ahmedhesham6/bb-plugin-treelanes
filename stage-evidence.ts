@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { deliveryStagesSchema, stageChecksSchema } from "./delivery-plan";
+import { checkNameSchema, deliveryStagesSchema, stageChecksSchema } from "./delivery-plan";
 import { setupPlanSchema } from "./setup-plan";
 
 const MAX_TEXT_LENGTH = 4_096;
@@ -20,7 +20,7 @@ const boundedList = z
 
 const completionCheckSchema = z
   .object({
-    name: z.string().trim().min(1).max(256),
+    name: checkNameSchema,
     status: z.enum([
       "passed",
       "failed",
@@ -29,6 +29,10 @@ const completionCheckSchema = z
       "blocked",
     ]),
     evidence: z.string().max(MAX_TEXT_LENGTH),
+    nonTaskFailure: z.object({
+      kind: z.enum(["base", "environment"]),
+      diagnosis: boundedText.describe("Evidence that this is not a task defect: the compared base revision and failures, or the unavailable external dependency and local diagnosis. Never use for unknown or branch-caused failures."),
+    }).strict().optional(),
   })
   .strict();
 
@@ -37,8 +41,9 @@ export const taskContextSchema = z
     outcome: boundedText,
     scope: boundedList,
     decisions: boundedList,
-    requiredChecks: boundedList,
+    requiredChecks: z.array(checkNameSchema).max(MAX_LIST_ITEMS),
     allowedActions: boundedList,
+    deliveryTarget: z.enum(["pr", "local"]).optional(),
     deliveryStages: deliveryStagesSchema.optional(),
     stageChecks: stageChecksSchema.optional(),
     setup: setupPlanSchema.optional(),
@@ -65,6 +70,8 @@ export const completionEvidenceSchema = z
     decisionsResolved: z.boolean(),
     openFindings: boundedList,
     summary: boundedText,
+    nextAction: z.string().trim().min(1).max(1024).optional()
+      .describe("Incomplete TDD, Quality or Simplify: a concrete repair within the saved scope and the check to rerun. Omit for human decisions or external dependencies with no local repair."),
   })
   .strict();
 

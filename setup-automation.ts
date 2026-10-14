@@ -14,7 +14,7 @@ export type AutomationContext = {
   task: TaskContext | null; activeStepId: string | null; paused: boolean;
 };
 export type SetupRequest = {
-  id: number; environment_id: string; kind: "initial" | "recovery"; task_revision: number;
+  id: number; environment_id: string; kind: "initial" | "recovery" | "reopen"; task_revision: number;
   stage_updated_at: number; status: string; thread_id: string | null; attempts: number;
   prepared_json: string | null; reason: string | null; updated_at: number;
   next_attempt_at: number; last_error: string | null;
@@ -34,18 +34,21 @@ CREATE INDEX worktree_setup_requests_env ON worktree_setup_requests(environment_
 
 export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
   context(environmentId: string): AutomationContext;
+  useInitiatingThread(): Promise<boolean>;
+  modelPreferences(): Promise<{ modelMap: Record<string, { providerId: string | null; model: string | null; reasoningLevel?: string }> }>;
   commit(request: SetupRequest, plan: SetupPlan): void;
-  playbooks(projectId: string): unknown;
   listThreads(projectId: string): Promise<Thread[]>;
   hasLiveWork(thread: Thread): boolean;
+  retryThread(threadId: string, environmentId: string, assignment: string, eligible: () => boolean, force?: boolean): Promise<void>;
   disposed(): boolean;
 }) {
   const locks = new Map<string, Promise<void>>();
   const latest = (env: string) => db.prepare("SELECT * FROM worktree_setup_requests WHERE environment_id = ? ORDER BY id DESC LIMIT 1").get(env) as SetupRequest | undefined;
+  const orchestrator = (env: string) => (db.prepare("SELECT thread_id FROM worktree_setup_requests WHERE environment_id = ? AND kind = 'initial' AND thread_id IS NOT NULL ORDER BY id DESC LIMIT 1").get(env) as { thread_id: string } | undefined)?.thread_id ?? (db.prepare("SELECT initiator_thread_id FROM worktree_delivery_runs WHERE environment_id = ?").get(env) as { initiator_thread_id: string } | undefined)?.initiator_thread_id ?? null;
   const readRun = (env: string) => db.prepare("SELECT * FROM worktree_delivery_runs WHERE environment_id = ?").get(env) as { initiator_thread_id: string; request_json: string; recovery_count: number } | undefined;
-  const title = (job: SetupRequest) => `Workflow setup [${job.environment_id}:${job.id}:${job.attempts}]`;
+  const title = (job: SetupRequest) => `Workflow orchestrator [${job.environment_id}:${job.id}:${job.attempts}]`;
   const pending = (env: string) => { const job = latest(env); return Boolean(job && ["pending", "starting", "started", "blocked"].includes(job.status)); };
-  const isPlanner = (id: string, threadTitle?: string | null) => Boolean(db.prepare("SELECT 1 FROM worktree_setup_requests WHERE thread_id = ?").get(id)) || Boolean(threadTitle?.startsWith("Workflow setup [") && db.prepare("SELECT * FROM worktree_setup_requests WHERE status = 'starting'").all().some(row => title(row as SetupRequest) === threadTitle));
+  const isPlanner = (id: string, threadTitle?: string | null) => Boolean(db.prepare("SELECT 1 FROM worktree_setup_requests r JOIN worktree_cards c ON c.environment_id = r.environment_id WHERE r.thread_id = ? AND c.stage != 'design'").get(id)) || Boolean((threadTitle?.startsWith("Workflow setup [") || threadTitle?.startsWith("Workflow orchestrator [")) && db.prepare("SELECT * FROM worktree_setup_requests WHERE status = 'starting'").all().some(row => title(row as SetupRequest) === threadTitle));
   const fresh = (job: SetupRequest) => {
     const state = hooks.context(job.environment_id);
     if (state.taskRevision !== job.task_revision || state.stageUpdatedAt !== job.stage_updated_at) throw new Error("Setup request is stale. The task or stage changed.");
@@ -70,10 +73,32 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       return insert(env, "initial", null);
     })();
   }
+  function openDesignGate(env: string) {
+    const job = latest(env);
+    const state = hooks.context(env);
+    if (!job || job.kind === "recovery" || job.status !== "pending" || state.stage !== "tdd" || state.task?.setup) return;
+    db.prepare("UPDATE worktree_setup_requests SET stage_updated_at = ?, task_revision = ? WHERE id = ?")
+      .run(state.stageUpdatedAt, state.taskRevision, job.id);
+  }
+  function refreshInitial(env: string) {
+    const job = latest(env);
+    if (!job || job.kind === "recovery" || job.status === "applied") return job;
+    const state = hooks.context(env);
+    // A task edit keeps the delivery request, but its planner needs a new assignment.
+    // Stage changes and completed setup planning do not grant a new initial start.
+    if (state.taskRevision === job.task_revision || state.stageUpdatedAt !== job.stage_updated_at ||
+        !state.task || state.task.setup || state.activeStepId || state.paused ||
+        ["design", "review", "done", "tickets"].includes(state.stage)) return job;
+    return db.transaction(() => {
+      db.prepare("UPDATE worktree_setup_requests SET status = 'stale', last_error = 'Task changed before setup was applied' WHERE id = ?").run(job.id);
+      return insert(env, job.kind, job.reason);
+    })();
+  }
   function recover(env: string, reason: string) {
+    if (hooks.context(env).stage === "design") throw new Error("Keep pending design decisions in Design; recovery cannot start implementation.");
     const run = readRun(env);
     if (!run) throw new Error("This task did not enable automatic delivery.");
-    const job = latest(env);
+    const job = refreshInitial(env);
     if (job && ["pending", "starting", "started", "blocked"].includes(job.status)) return job;
     if (run.recovery_count >= 2) throw new Error("Automatic plan recovery reached its limit of two changes.");
     const state = hooks.context(env);
@@ -83,29 +108,20 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       return insert(env, "recovery", reason.slice(0, 2000));
     })();
   }
-  async function catalog(environmentId: string, projectId: string) {
-    const providers = (await bb.sdk.providers.list({ environmentId })).filter(provider => provider.available).slice(0, 12);
-    const skills = await bb.sdk.skills.list({ environmentId, projectId });
-    const models = await Promise.all(providers.map(async provider => {
-      try {
-        const values = await bb.sdk.providers.models({ environmentId, providerId: provider.id });
-        return { providerId: provider.id, error: values.modelLoadError, models: values.models.slice(0, 40).map(model => ({
-          id: model.id, model: model.model, description: model.description.slice(0, 500), supportedReasoningEfforts: model.supportedReasoningEfforts,
-        })) };
-      } catch { return { providerId: provider.id, error: "Catalog unavailable", models: [] }; }
-    }));
-    return { providers: models, skills: skills.skills.slice(0, 100).map(({ id, name, description, provider }) => ({ id, name, description: description?.slice(0, 300), provider })),
-      note: "Catalog lists are bounded. Use workflow_board_catalog for another provider or relevant skills if needed." };
-  }
   async function waiting(thread: Thread) {
     return thread.hasPendingInteraction || (await bb.sdk.threads.interactions.list({ threadId: thread.id })).length > 0 ||
       (await bb.sdk.threads.queuedMessages.list({ threadId: thread.id })).length > 0;
   }
-  async function tickUnlocked(env: string) {
-    let job = latest(env);
-    if (!job || ["applied", "blocked", "stale"].includes(job.status) || hooks.disposed()) return;
+  async function tickUnlocked(env: string, force = false) {
+    if (hooks.disposed()) return;
+    let job = refreshInitial(env);
+    if (!job || ["applied", "stale"].includes(job.status) || (job.status === "blocked" && !job.thread_id)) return;
     const state = hooks.context(env);
     if (state.paused) return;
+    if (state.stage === "design") {
+      if (state.stageUpdatedAt !== job.stage_updated_at) db.prepare("UPDATE worktree_setup_requests SET status = 'stale', last_error = 'Task returned to Design' WHERE id = ?").run(job.id);
+      return;
+    }
     if (state.stageUpdatedAt !== job.stage_updated_at || state.taskRevision !== job.task_revision) {
       db.prepare("UPDATE worktree_setup_requests SET status = 'stale', last_error = 'Task or stage changed' WHERE id = ?").run(job.id); return;
     }
@@ -113,7 +129,7 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
     const source = await bb.sdk.threads.get({ threadId: run.initiator_thread_id });
     const threads = (await hooks.listThreads(source.projectId)).filter(thread => thread.environmentId === env);
     if (job.status === "starting") {
-      const orphan = threads.find(thread => thread.title === title(job!));
+      const orphan = threads.find(thread => job!.thread_id ? thread.id === job!.thread_id : (thread.title === title(job!) || thread.title === `Workflow setup [${job!.environment_id}:${job!.id}:${job!.attempts}]`));
       if (orphan) {
         db.prepare("UPDATE worktree_setup_requests SET status = 'started', thread_id = ?, last_error = NULL WHERE id = ?").run(orphan.id, job.id);
         job = latest(env)!;
@@ -124,11 +140,29 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
         return;
       }
     }
-    if (job.status === "started") {
-      const worker = job.thread_id ? await bb.sdk.threads.get({ threadId: job.thread_id }) : null;
-      if (worker && (hooks.hasLiveWork(worker) || await waiting(worker))) return;
-      db.prepare("UPDATE worktree_setup_requests SET status = ?, next_attempt_at = ?, last_error = 'Setup worker ended without a validated plan' WHERE id = ?")
-        .run(job.attempts >= 2 ? "blocked" : "pending", Date.now() + 30_000, job.id);
+    if (job.thread_id && ["pending", "started", "blocked"].includes(job.status)) {
+      // Older versions queued a replacement after a worker failed or went idle.
+      // Retain that assignment and allow its worker to submit a corrected plan.
+      const worker = await bb.sdk.threads.get({ threadId: job.thread_id }).catch(() => null);
+      if (!worker || worker.deletedAt || worker.archivedAt || worker.environmentId !== env) {
+        db.prepare("UPDATE worktree_setup_requests SET last_error = 'Assigned setup worker is unavailable; inspect it before replacement' WHERE id = ?").run(job.id);
+        return;
+      }
+      db.prepare("UPDATE worktree_setup_requests SET status = 'started', last_error = NULL WHERE id = ?").run(job.id);
+      for (const thread of threads) {
+        if (await waiting(thread)) return;
+        if (thread.id !== run.initiator_thread_id && hooks.hasLiveWork(thread)) return;
+      }
+      if (worker.status === "error") {
+        const id = job.id;
+        await hooks.retryThread(worker.id, env, `setup:${id}`, () => {
+          const current = latest(env);
+          if (current?.id !== id || current.status !== "started" || current.thread_id !== worker.id) return false;
+          try { fresh(current); return true; } catch { return false; }
+        }, force);
+      } else if (worker.status === "idle") {
+        db.prepare("UPDATE worktree_setup_requests SET last_error = 'Setup worker is idle without a validated plan; continue in the same thread' WHERE id = ?").run(job.id);
+      }
       return;
     }
     for (const thread of threads) {
@@ -140,10 +174,21 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
     if (!execution?.model || !execution.reasoningLevel) throw new Error("The initiating thread must have explicit model and effort settings for setup planning.");
     const inheritedChoice = { providerId: source.providerId, model: execution.model, reasoningLevel: execution.reasoningLevel,
       permissionMode: execution.permissionMode ?? "auto", ...(execution.serviceTier ? { serviceTier: execution.serviceTier } : {}) };
-    const choice: typeof inheritedChoice = job.prepared_json ? JSON.parse(job.prepared_json) : inheritedChoice;
+    const preference = (await hooks.modelPreferences()).modelMap.orchestrator;
+    const reuseSource = await hooks.useInitiatingThread();
+    if (reuseSource && hooks.hasLiveWork(source)) return;
+    const differentProvider = reuseSource && preference?.providerId && preference.providerId !== source.providerId;
+    const selected = !differentProvider && preference && (preference.model || preference.reasoningLevel || preference.providerId)
+      ? await resolveStepExecution(bb.sdk, { environmentId: env, projectId: source.projectId }, {
+          providerId: inheritedChoice.providerId, model: inheritedChoice.model, reasoningLevel: inheritedChoice.reasoningLevel, skills: [], reason: "Use the saved orchestrator preference.",
+        }, preference) : inheritedChoice;
+    const choice: typeof inheritedChoice & { modelOverrideReason?: string } = job.prepared_json ? JSON.parse(job.prepared_json) : {
+      ...inheritedChoice, providerId: selected.providerId, model: selected.model, reasoningLevel: selected.reasoningLevel,
+      ...(differentProvider ? { modelOverrideReason: "Keep the initiating thread and its provider; changing harness requires another thread. Retain its current model and effort." } : {}),
+    };
     const context = fresh(job);
-    const prompt = buildSetupPrompt({ task: context.task!, stage: context.stage, activeStepId: context.activeStepId,
-      recoveryReason: job.reason, catalog: await catalog(env, source.projectId), playbooks: hooks.playbooks(source.projectId) });
+    const prompt = buildSetupPrompt({ environmentId: env, requestId: job.id, taskRevision: context.taskRevision,
+      stage: context.stage, activeStepId: context.activeStepId, recoveryReason: job.reason });
     fresh(job);
     if (hooks.disposed()) return;
     const claim = db.prepare("UPDATE worktree_setup_requests SET status = 'starting', attempts = attempts + 1, updated_at = ?, prepared_json = ? WHERE id = ? AND status = 'pending' AND attempts = ?")
@@ -151,8 +196,18 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
     if (claim.changes !== 1) return;
     job = latest(env)!;
     try {
-      const worker = await bb.sdk.threads.spawn({ ...choice, projectId: source.projectId, parentThreadId: source.id,
-        environment: { type: "reuse", environmentId: env }, visibility: "hidden", title: title(job), prompt });
+      const coordinatorId = job.kind !== "initial" ? orchestrator(env) : (await hooks.useInitiatingThread()) ? source.id : null;
+      let worker: { id: string };
+      if (coordinatorId) {
+        const coordinator = await bb.sdk.threads.get({ threadId: coordinatorId });
+        if (!coordinator || coordinator.archivedAt || coordinator.deletedAt || coordinator.environmentId !== env) throw new Error("The saved orchestrator is unavailable. Keep the task for inspection.");
+        db.prepare("UPDATE worktree_setup_requests SET thread_id = ? WHERE id = ?").run(coordinatorId, job.id);
+        await bb.sdk.threads.send({ threadId: coordinatorId, mode: coordinator.status === "active" ? "steer" : "start", model: choice.model, reasoningLevel: choice.reasoningLevel, input: [{ type: "text", mentions: [], text: prompt }] });
+        worker = coordinator;
+      } else {
+        worker = await bb.sdk.threads.spawn({ ...choice, projectId: source.projectId, parentThreadId: source.id,
+          environment: { type: "reuse", environmentId: env }, visibility: "visible", title: title(job), prompt });
+      }
       // A fast worker can apply its plan before the spawn response arrives.
       db.prepare("UPDATE worktree_setup_requests SET thread_id = ?, status = CASE WHEN status = 'starting' THEN 'started' ELSE status END WHERE id = ?")
         .run(worker.id, job.id);
@@ -162,9 +217,9 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       // Leave the starting claim intact until orphan lookup settles the uncertain spawn.
     }
   }
-  async function tick(env: string) {
+  async function tick(env: string, force = false) {
     if (locks.has(env)) return locks.get(env);
-    const promise = tickUnlocked(env); locks.set(env, promise);
+    const promise = tickUnlocked(env, force); locks.set(env, promise);
     try { await promise; }
     catch (error) {
       if (!hooks.disposed()) {
@@ -188,7 +243,8 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       if (await waiting(other) || (other.id !== run.initiator_thread_id && hooks.hasLiveWork(other))) throw new Error("Another thread has live work or pending input.");
     }
     validateSetupProposal(context.task!, plan, context.stage, context.activeStepId, job.kind === "recovery");
-    await Promise.all(plan.steps.map(step => resolveStepExecution(bb.sdk, { environmentId: job.environment_id, projectId: thread.projectId }, step.execution)));
+    const { modelMap } = await hooks.modelPreferences();
+    await Promise.all(plan.steps.map(step => resolveStepExecution(bb.sdk, { environmentId: job.environment_id, projectId: thread.projectId }, step.execution, modelMap[step.stage])));
     fresh(job);
     if (hooks.disposed()) throw new Error("Plugin reloaded before setup submission.");
     return db.transaction(() => {
@@ -198,10 +254,10 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       return { saved: true, taskRevision: hooks.context(job.environment_id).taskRevision, dispatch: "after setup worker is idle" };
     })();
   }
-  async function tickAll() {
+  async function tickAll(force = false) {
     const rows = db.prepare("SELECT environment_id FROM worktree_delivery_runs").all() as { environment_id: string }[];
-    await Promise.all(rows.map(async row => { try { await tick(row.environment_id); } catch (error) { if (!hooks.disposed()) bb.log.error(`Setup recovery for ${row.environment_id}: ${String(error)}`); } }));
+    await Promise.all(rows.map(async row => { try { await tick(row.environment_id, force); } catch (error) { if (!hooks.disposed()) bb.log.error(`Setup recovery for ${row.environment_id}: ${String(error)}`); } }));
   }
-  return { enqueue, recover, apply, tick, tickAll, pending, isPlanner, latest, enabled: (env: string) => Boolean(readRun(env)),
+  return { enqueue, reopen: (env: string, reason: string) => insert(env, "reopen", reason), openDesignGate, recover, apply, tick, tickAll, pending, isPlanner, latest, orchestrator, requestedTarget: (env: string) => { const run = readRun(env); return run ? (JSON.parse(run.request_json) as TaskContext).deliveryTarget : undefined; }, enabled: (env: string) => Boolean(readRun(env)),
     exhausted: (env: string) => (readRun(env)?.recovery_count ?? 0) >= 2 };
 }

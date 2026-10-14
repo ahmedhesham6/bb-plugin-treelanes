@@ -107,6 +107,28 @@ describe("step execution schema", () => {
 });
 
 describe("resolveStepExecution", () => {
+  it("does not silently fall back when the preferred model is unavailable", async () => {
+    const fixture = makeSdk({ providers: [provider("codex"), provider("claude-code")] });
+    await expect(resolveStepExecution(fixture.sdk,
+      { environmentId: "env", projectId: "project" },
+      { ...validChoice, skills: [] },
+      { providerId: "claude-code", model: "claude-fable-5-1" },
+    )).rejects.toThrow(/not available in the live catalog/);
+    expect(fixture.calls[0]!.args.providerId).toBe("claude-code");
+  });
+
+  it("rejects a blank override reason and retains an explicit alternative reason", async () => {
+    expect(stepExecutionSchema.safeParse({ ...validChoice, modelOverrideReason: "  " }).success).toBe(false);
+    const fixture = makeSdk({});
+    const reason = "The preferred provider is unavailable; this bounded check can use Codex.";
+    const selected = await resolveStepExecution(fixture.sdk,
+      { environmentId: "env", projectId: "project" },
+      { ...validChoice, skills: [], modelOverrideReason: reason },
+      { providerId: "claude-code", model: "claude-fable-5-1" },
+    );
+    expect(selected).toMatchObject({ providerId: "codex", model: "model-canonical", modelOverrideReason: reason });
+  });
+
   it("routes both catalog lookups and returns exact provider, model, skills, and reason", async () => {
     const fixture = makeSdk({
       skills: [skill("skill_shared", "shared-skill"), skill("skill_safe", "safe-skill", "codex")],

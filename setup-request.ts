@@ -1,51 +1,17 @@
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { requiredStageChecks } from "./delivery-plan";
-import { setupPlanSchema, type SetupPlan, type SetupStep } from "./setup-plan";
+import { normalizeLegacyDeliveryStages, requirePrWatch, setupPlanSchema, type SetupPlan, type SetupStep } from "./setup-plan";
 import type { TaskContext } from "./stage-evidence";
+import { DELIVERY_SKILL_INSTRUCTION, IMPLEMENTATION_GUIDE } from "./stage-prompts";
 
 const operationalStages = new Set(["tdd", "quality", "simplify", "pr"]);
-const MAX_PROMPT_LENGTH = 32_768;
-const MAX_TASK_TEXT = 12_000;
-const MAX_CATALOG_TEXT = 6_000;
-const MAX_PLAYBOOK_TEXT = 6_000;
-const MAX_RECOVERY_REASON = 2_048;
-
 export const setupProposalSchema = z
   .object({ setup: setupPlanSchema })
   .strict();
 
-const SETUP_WORKER_INSTRUCTIONS = [
-  "You are a setup-only worker for Workflow Board.",
-  "Plan work only. Do not implement the task.",
-  "Do not edit files, move board cards, dispatch workers, or submit a completion receipt.",
-  "Read repository instructions and check definitions if useful.",
-  "Read current state with workflow_board_get_context when needed.",
-  "Return the plan through workflow_board_apply_setup {setup}.",
-  "Choose live provider IDs, model IDs or canonical model names, supported reasoning efforts, and skill IDs.",
-  "Call workflow_board_catalog when provider, model, reasoning-effort, or skill information is missing.",
-  "Use the smallest complete bounded plan that satisfies the task.",
-  "Preserve every user constraint, including explicit provider and model requests, required checks, and accepted decisions.",
-  "Do not invent authority or confirmations.",
-  "Do not use model defaults or fill in missing execution choices by guesswork.",
-  "The parent restricts permission inheritance. Do not request, widen, or infer permission settings.",
-  "Output a plan only, not implementation work. If the task cannot be fulfilled with the available information, return a blocker instead of guessing.",
-].join("\n");
-
 function reject(message: string): never {
   throw new Error(`Setup proposal rejected: ${message}`);
-}
-
-function boundedJson(value: unknown, limit: number): string {
-  let encoded: string;
-  try {
-    const result = JSON.stringify(value);
-    encoded = result === undefined ? String(value) : result;
-  } catch {
-    encoded = "[unserializable input]";
-  }
-  if (encoded.length <= limit) return encoded;
-  return `${encoded.slice(0, Math.max(0, limit - 27))}...[truncated input]`;
 }
 
 function assertOperationalStage(stage: string): void {
@@ -82,12 +48,11 @@ export function validateSetupProposal(
   activeStepId: string | null,
   recovery: boolean,
 ): void {
-  if (previous.deliveryStages !== undefined) {
-    reject("legacy deliveryStages cannot be automated");
-  }
   assertOperationalStage(stage);
 
   const parsed = setupPlanSchema.parse(proposed);
+  normalizeLegacyDeliveryStages({ ...previous, setup: parsed });
+  requirePrWatch({ ...previous, setup: parsed });
   for (const step of parsed.steps) assertCheckBudget(step, previous);
 
   if (!recovery) {
@@ -129,25 +94,22 @@ export function validateSetupProposal(
 }
 
 type SetupPromptInput = {
-  task: TaskContext;
+  environmentId: string;
+  requestId: number;
+  taskRevision: number;
   stage: string;
   activeStepId: string | null;
   recoveryReason: string | null;
-  catalog: unknown;
-  playbooks: unknown;
 };
 
 export function buildSetupPrompt(input: SetupPromptInput): string {
-  const dynamic = [
-    `Current operational stage: ${boundedJson(input.stage, 128)}`,
-    `Active setup step ID: ${boundedJson(input.activeStepId, 128)}`,
-    `Recovery reason: ${boundedJson(input.recoveryReason, MAX_RECOVERY_REASON)}`,
-    `Saved task context:\n${boundedJson(input.task, MAX_TASK_TEXT)}`,
-    `Live provider/model/skill catalog:\n${boundedJson(input.catalog, MAX_CATALOG_TEXT)}`,
-    `Checked setup playbooks:\n${boundedJson(input.playbooks, MAX_PLAYBOOK_TEXT)}`,
-  ].join("\n\n");
-  const prompt = `${SETUP_WORKER_INSTRUCTIONS}\n\n${dynamic}`;
-  return prompt.length <= MAX_PROMPT_LENGTH
-    ? prompt
-    : `${prompt.slice(0, MAX_PROMPT_LENGTH - 27)}...[truncated prompt]`;
+  return [
+    DELIVERY_SKILL_INSTRUCTION,
+    IMPLEMENTATION_GUIDE,
+    "You are the persistent task orchestrator. Plan the complete saved outcome, with only needed steps and children. Read /delivery's references/orchestration.md.",
+    "Read workflow_board_get_context for the full saved task and workflow_board_catalog for live execution choices. Follow its modelMap preferences and modelSelectionPolicy; explain alternatives in execution.modelOverrideReason. Submit workflow_board_apply_setup, then end this turn. Do not edit product code.",
+    `Assignment: ${JSON.stringify({ environmentId: input.environmentId, requestId: input.requestId,
+      taskRevision: input.taskRevision, stage: input.stage, activeStepId: input.activeStepId,
+      recoveryReason: input.recoveryReason?.slice(0, 2048) ?? null })}`,
+  ].join("\n");
 }

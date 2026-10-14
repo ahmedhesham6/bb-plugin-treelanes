@@ -226,7 +226,7 @@ describe("Workflow Board backend", () => {
         environmentId: "environment-one",
       },
       prompt: expect.stringContaining(
-        "/tdd Implement the approved design in this Git Worktree. Use the agreed test seams and work test-first. Make the smallest complete change and preserve unrelated behavior. Run the relevant tests and type checks. Finish only when the design is implemented and all checks pass. End with [workflow:tdd-complete].",
+        "/tdd Implement the saved step through the accepted test interfaces.",
       ),
     });
 
@@ -288,13 +288,13 @@ describe("Workflow Board backend", () => {
       model: "gpt-5.6-sol",
       environment: { type: "reuse", environmentId: "environment-one" },
       prompt: expect.stringContaining(
-        "/thermo-nuclear-code-quality-review Review every change in this Git Worktree. Fix each valid finding within the approved design, then review again. Run the relevant tests and type checks after each fix. Finish only when no findings remain and all checks pass. End with [workflow:quality-clear].",
+        "/thermo-nuclear-code-quality-review Review the task diff and fix valid findings within scope.",
       ),
     });
     await harness.lifecycle.dispose();
   });
 
-  it("starts Simplify with Fable and tells child agents to use Opus", async () => {
+  it("starts Simplify with its configured model and stage skill", async () => {
     const quality = worktreeThread({
       id: "thread-quality",
       projectId: "project-one",
@@ -314,8 +314,8 @@ describe("Workflow Board backend", () => {
             permissionCeiling: "auto" as const,
             models: [
               {
-                id: "claude-fable-5",
-                model: "claude-fable-5",
+                id: "claude-fable-5-1",
+                model: "claude-fable-5-1",
                 displayName: "Fable 5",
                 description: "",
                 supportedReasoningEfforts: [],
@@ -359,10 +359,10 @@ describe("Workflow Board backend", () => {
     expect(spawned).toHaveLength(1);
     expect(spawned[0]).toMatchObject({
       providerId: "claude-code",
-      model: "claude-fable-5",
+      model: "claude-fable-5-1",
       environment: { type: "reuse", environmentId: "environment-one" },
       prompt: expect.stringContaining(
-        "/simplify Simplify the current changes in this Git Worktree without changing behavior or widening scope. Use Fable as the main agent. For each child agent you start, set its model to opus. Remove needless code and complexity. Keep public interfaces and tests valid. Run the relevant tests and type checks. Finish only when behavior is unchanged and all checks pass. End with [workflow:simplify-complete].",
+        "/simplify Reduce needless code in the task diff and preserve behavior.",
       ),
     });
     await harness.lifecycle.dispose();
@@ -554,7 +554,7 @@ describe("Workflow Board backend", () => {
       providerId: "codex",
       model: "gpt-5.6-sol",
       prompt: expect.stringContaining(
-        "Create and watch this pull request.\n\nKeep PR Watch moving when a check fails. Diagnose each failure. Fix every failure caused by the current branch, then rerun the relevant check until it passes. For a failure that is pre-existing, unrelated to the branch, flaky, or caused by missing test data, secrets, or services, record the command and failure in the pull request description and continue. Commit and push the valid branch changes, create or reuse the pull request, and run /babysit-pr even when a recorded external failure remains. Use pull request checks to confirm the result in the normal CI environment.\n\nUI proof: inspect the branch diff for user-visible UI changes. When UI changed, run the changed app and capture at least one clear screenshot of the changed state. Give each image plain alt text. For a new pull request, upload each screenshot with `gh pr create --attach '<path>#<alt text>'`. For an open pull request, use `gh pr edit <number> --attach '<path>#<alt text>'` so its current description stays intact. Use a GitHub CLI release whose command help lists `--attach`. Keep local screenshot files out of the commit. Before /babysit-pr, run `gh pr view --json body` and confirm that the pull request body contains each uploaded screenshot. When no user-visible UI changed, continue without a screenshot.\n\n/show-me When you create a pull request, write its description with simple words and short sentences. State what changed and how you checked it. Add only the smallest GitHub Markdown visual that helps a reviewer understand the change. When you reuse an open pull request, keep its current description.",
+        "Create and watch this pull request.",
       ),
       environment: { type: "reuse", environmentId: "environment-one" },
     });
@@ -615,7 +615,7 @@ describe("Workflow Board backend", () => {
       providerId: "codex",
       model: "gpt-5.6-sol",
       prompt: expect.stringContaining(
-        "First, inspect all staged, unstaged, and untracked changes. Stage every implementation file that belongs to the current change, including source code, tests, required configuration, migrations, generated files, and lockfiles. Never stage or commit a design, planning, or workflow context document. This includes ADRs, design documents, plans, discussion notes, temporary specs, and CONTEXT.md. If any such file is already staged, remove it from the index without changing or deleting its working-tree file. Remove all other unrelated files from the index without changing their working-tree contents. Before committing, find and read each contribution guide that exists and applies to the changed files, including CONTRIBUTING files and contribution documents they link to. If no contribution guide exists, continue. Validate the implementation files, required checks, branch and commit names, and pull request title and body against the guides. Fix each valid gap before pushing or opening the pull request. Commit only the implementation files with a concise message. Push the current branch and all unpushed commits, and set its upstream when needed. Then determine the current branch and its Git Worktree base branch. Find an open pull request from the current branch to that base branch. If none exists, create a ready-for-review pull request against the base branch. Do not create a draft. Write a concise title and body that state the change and validation. Then run /babysit-pr on that pull request. Stay on duty until it is ready to merge, merged, or closed. Never merge it yourself. Assign the Worktree Stage to done only after it merges.\n\nKeep PR Watch moving when a check fails. Diagnose each failure. Fix every failure caused by the current branch, then rerun the relevant check until it passes. For a failure that is pre-existing, unrelated to the branch, flaky, or caused by missing test data, secrets, or services, record the command and failure in the pull request description and continue. Commit and push the valid branch changes, create or reuse the pull request, and run /babysit-pr even when a recorded external failure remains. Use pull request checks to confirm the result in the normal CI environment.\n\nUI proof: inspect the branch diff for user-visible UI changes. When UI changed, run the changed app and capture at least one clear screenshot of the changed state. Give each image plain alt text. For a new pull request, upload each screenshot with `gh pr create --attach '<path>#<alt text>'`. For an open pull request, use `gh pr edit <number> --attach '<path>#<alt text>'` so its current description stays intact. Use a GitHub CLI release whose command help lists `--attach`. Keep local screenshot files out of the commit. Before /babysit-pr, run `gh pr view --json body` and confirm that the pull request body contains each uploaded screenshot. When no user-visible UI changed, continue without a screenshot.\n\n/show-me When you create a pull request, write its description with simple words and short sentences. State what changed and how you checked it. Add only the smallest GitHub Markdown visual that helps a reviewer understand the change. When you reuse an open pull request, keep its current description.",
+        "/babysit-pr",
       ),
       environment: { type: "reuse", environmentId: "environment-one" },
     });
@@ -928,7 +928,7 @@ describe("Workflow Board backend", () => {
       model: "gpt-5.6-sol",
       environment: { type: "reuse", environmentId: "environment-one" },
       prompt: expect.stringContaining(
-        "/thermo-nuclear-code-quality-review Review every change in this Git Worktree. Fix each valid finding within the approved design, then review again. Run the relevant tests and type checks after each fix. Finish only when no findings remain and all checks pass. End with [workflow:quality-clear].",
+        "/thermo-nuclear-code-quality-review Review the task diff and fix valid findings within scope.",
       ),
     });
 
@@ -1093,10 +1093,10 @@ describe("Workflow Board backend", () => {
     });
 
     expect(configuration.instructions).toContain(
-      "Assign review for /code-review",
+      "Use review for external /code-review",
     );
     expect(configuration.instructions).toContain(
-      "quality only for the internal /thermo-nuclear-code-quality-review",
+      "For Git Worktree delivery, use /delivery",
     );
 
     await harness.lifecycle.dispose();
@@ -1292,6 +1292,60 @@ describe("Workflow Board backend", () => {
     expect(board.cards[0]).toMatchObject({ environmentId: "environment-two" });
     expect(board.cards[0]?.threads.map((thread) => thread.id)).toEqual([activeAgain.id]);
     await harness.lifecycle.dispose();
+  });
+
+  it.each(["t3sidebar", "worktree-sidebar"])("settles only the chosen thread through %s and removes the last settled Worktree Card", async (provider) => {
+    const threads = ["root", "child"].map((id) => worktreeThread({
+      id, projectId: "project-one", status: "idle", updatedAt: 1,
+      parentThreadId: id === "child" ? "root" : null,
+    }));
+    const rows: Array<{ threadId: string; settledAt: number; snoozedUntil: null; snoozedAt: null }> = [];
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "workflow-board",
+      settings: { lifecycleProvider: provider },
+      sdk: { ...sdkFor(threads), plugins: {
+        callRpc: async ({ pluginId, method, input }) => {
+          expect(pluginId).toBe(provider);
+          if (method === "listLifecycle") return { rows };
+          expect(method).toBe("settle");
+          rows.push({ threadId: (input as { threadId: string }).threadId, settledAt: Date.now(), snoozedUntil: null, snoozedAt: null });
+          return { ok: true };
+        },
+      } },
+    });
+    await plugin(bb);
+    try {
+      await expect(harness.behavior.callRpc("settleThread", { threadId: "child" })).resolves.toEqual({ ok: true });
+      const board = await harness.behavior.callRpc("getBoard", { projectId: "project-one" }) as { cards: Array<{ threads: Array<{ id: string; canSettle: boolean }> }> };
+      expect(board.cards[0]?.threads.map(({ id, canSettle }) => ({ id, canSettle }))).toEqual([{ id: "root", canSettle: true }]);
+      await harness.behavior.callRpc("settleThread", { threadId: "root" });
+      expect(await harness.behavior.callRpc("getBoard", { projectId: "project-one" })).toMatchObject({ cards: [] });
+      expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
+    } finally { await harness.lifecycle.dispose(); }
+  });
+
+  it.each(["active", "question", "background", "outside", "unavailable"])("does not hide a thread when settling is blocked: %s", async (reason) => {
+    const thread = {
+      ...worktreeThread({ id: "thread-one", projectId: "project-one", status: reason === "active" ? "active" : "idle" }),
+      hasPendingInteraction: reason === "question",
+      ...(reason === "background" ? { activity: { activeWorkflowCount: 0, activeBackgroundAgentCount: 1, activeBackgroundCommandCount: 0, activePlanModeCount: 0, activeGoalCount: 0 } } : {}),
+      ...(reason === "outside" ? { environmentWorkspaceDisplayKind: "other" as const } : {}),
+    };
+    const sdk = sdkFor([]);
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "workflow-board",
+      sdk: { ...sdk, threads: { ...sdk.threads, get: async () => thread, list: async () => [thread] }, plugins: {
+        callRpc: async () => { throw new Error("T3 Sidebar unavailable"); },
+      } },
+    });
+    await plugin(bb);
+    try {
+      await expect(harness.behavior.callRpc("settleThread", { threadId: thread.id })).rejects.toThrow(
+        reason === "unavailable" ? "T3 Sidebar unavailable" : reason === "outside" ? "not on the Workflow Board" : "live work or a pending question",
+      );
+      expect(harness.inspection.sdk.callsTo("plugins.callRpc")).toHaveLength(reason === "unavailable" ? 1 : 0);
+      expect(harness.realtimeSignals).toHaveLength(0);
+    } finally { await harness.lifecycle.dispose(); }
   });
 
   it("ignores threads that are not in Git worktrees", async () => {

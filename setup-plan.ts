@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { checkNameSchema } from "./delivery-plan";
 import { stepExecutionSchema } from "./step-execution";
 
 export const setupStepSchema = z.object({
@@ -6,7 +7,7 @@ export const setupStepSchema = z.object({
   title: z.string().trim().min(1).max(160),
   stage: z.enum(["tdd", "quality", "simplify", "pr"]),
   instructions: z.string().trim().min(1).max(4096),
-  checks: z.array(z.string().trim().min(1).max(256)).max(64),
+  checks: z.array(checkNameSchema).max(64),
   execution: stepExecutionSchema,
 }).strict();
 
@@ -55,4 +56,32 @@ export function validateSetupRevision(previous: SetupPlan | undefined, next: Set
   } else if (next && stage !== "design" && next.steps[0]!.stage !== stage) {
     throw new Error("The first setup step must match the current stage.");
   }
+}
+
+
+// Completed records are history. Keep the saved records when a caller
+// abbreviates them while editing future work; IDs, stages and order stay strict.
+export function preserveCompletedSteps(previous: SetupPlan | undefined, next: SetupPlan | undefined, activeId: string | null | undefined): SetupPlan | undefined {
+  if (!previous || !next || !activeId) return next;
+  const index = previous.steps.findIndex(step => step.id === activeId);
+  if (index < 0 || next.steps[index]?.id !== activeId || previous.steps.slice(0, index).some((step, i) =>
+    step.id !== next.steps[i]?.id || step.stage !== next.steps[i]?.stage)) return next;
+  return { ...next, steps: [...previous.steps.slice(0, index), ...next.steps.slice(index)] };
+}
+
+export function requirePrWatch(task: { deliveryTarget?: "pr" | "local"; setup?: SetupPlan; deliveryStages?: readonly string[] }) {
+  if (task.deliveryTarget !== "pr") return;
+  const finalStage = task.setup?.steps.at(-1)?.stage ?? task.deliveryStages?.at(-1);
+  if ((task.setup || task.deliveryStages) && finalStage !== "pr") throw new Error("Keep PR Watch as the final step. You may change the work before it.");
+}
+
+// A matching legacy stage list adds no authority beyond the setup.
+export function normalizeLegacyDeliveryStages(task: { setup?: SetupPlan; deliveryStages?: readonly string[] }): void {
+  if (!task.setup || !task.deliveryStages) return;
+  const stages = task.setup.steps.map(step => step.stage)
+    .filter((stage, index, all) => index === 0 || stage !== all[index - 1]);
+  if (JSON.stringify(stages) !== JSON.stringify(task.deliveryStages)) {
+    throw new Error("deliveryStages conflicts with setup. Keep setup and omit deliveryStages, or make the stage order match.");
+  }
+  delete task.deliveryStages;
 }
