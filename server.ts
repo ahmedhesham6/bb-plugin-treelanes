@@ -17,6 +17,7 @@ import { buildStagePrompt, DEFAULT_STAGE_PROMPTS } from "./stage-prompts";
 import { setupProposalSchema } from "./setup-request";
 import { sidebar, sidebarMigrations } from "./sidebar/server";
 import { importMigration, importOldData } from "./import-data";
+import { choicesSchema, type Choices, liveCatalog, requireStepChoices, stepChoices, taskMapLayout, taskMapMigration, taskMapStore } from "./task-map";
 import {
   DEFAULT_STAGE,
   STAGE_IDS,
@@ -142,7 +143,11 @@ export const rpcContract = defineRpcContract({
     input: z.object({ environmentId: z.string() }).strict(),
     output: z.object({ threadId: z.string() }),
   },
+  getTaskMap: { input: z.object({}).strict(), output: z.custom<TaskMapResult>() },
+  saveTaskMap: { input: z.object({ choices: choicesSchema }).strict(), output: z.custom<TaskMapResult>() },
 });
+
+export type TaskMapResult = ReturnType<typeof taskMapLayout> & { choices: Choices } & Awaited<ReturnType<typeof liveCatalog>>;
 
 type ThreadRow = {
   id: string;
@@ -244,13 +249,6 @@ export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
     startInDesign: { type: "boolean", label: "Wait in Design before automatic delivery", default: true },
     useInitiatingThread: { type: "boolean", label: "Use the initiating thread as orchestrator", default: true },
-    orchestratorProviderId: { type: "string", label: "Preferred orchestrator provider", default: "" },
-    orchestratorModel: { type: "string", label: "Preferred orchestrator model", default: "" },
-    orchestratorReasoningLevel: { type: "select", label: "Preferred orchestrator reasoning (auto lets the orchestrator choose)", options: ["auto", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode", "none"], default: "auto" },
-    tddReasoningLevel: { type: "select", label: "Preferred TDD reasoning (auto lets the orchestrator choose)", options: ["auto", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode", "none"], default: "auto" },
-    reviewReasoningLevel: { type: "select", label: "Preferred Quality reasoning (auto lets the orchestrator choose)", options: ["auto", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode", "none"], default: "auto" },
-    simplifyReasoningLevel: { type: "select", label: "Preferred Simplify reasoning (auto lets the orchestrator choose)", options: ["auto", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode", "none"], default: "auto" },
-    prReasoningLevel: { type: "select", label: "Preferred PR Watch reasoning (auto lets the orchestrator choose)", options: ["auto", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode", "none"], default: "auto" },
     autoAdvanceGrilling: {
       type: "boolean",
       label: "Move finished Grilling to TDD",
@@ -261,45 +259,15 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Move through Implementation when work finishes",
       default: true,
     },
-    tddProviderId: {
-      type: "string",
-      label: "Preferred TDD provider (blank lets the orchestrator choose)",
-      default: "",
-    },
-    tddModel: {
-      type: "string",
-      label: "Preferred TDD model (blank lets the orchestrator choose)",
-      default: "",
-    },
     tddPrompt: {
       type: "string",
       label: "TDD prompt",
       default: DEFAULT_STAGE_PROMPTS.tdd,
     },
-    reviewProviderId: {
-      type: "string",
-      label: "Preferred Quality provider (blank lets the orchestrator choose)",
-      default: "",
-    },
-    reviewModel: {
-      type: "string",
-      label: "Preferred Quality model (blank lets the orchestrator choose)",
-      default: "",
-    },
     reviewPrompt: {
       type: "string",
       label: "Quality review prompt",
       default: DEFAULT_STAGE_PROMPTS.quality,
-    },
-    simplifyProviderId: {
-      type: "string",
-      label: "Preferred Simplify provider",
-      default: "claude-code",
-    },
-    simplifyModel: {
-      type: "string",
-      label: "Preferred Simplify model",
-      default: "claude-fable-5-1",
     },
     simplifyPrompt: {
       type: "string",
@@ -312,39 +280,12 @@ export default async function plugin(bb: BbPluginApi) {
       options: ["ask", "auto"],
       default: "auto",
     },
-    prProviderId: {
-      type: "string",
-      label: "Preferred PR Watch provider",
-      default: "codex",
-    },
-    prModel: {
-      type: "string",
-      label: "Preferred PR Watch model",
-      default: "gpt-5.6-sol",
-    },
     prPrompt: {
       type: "string",
       label: "PR prompt",
       default: DEFAULT_STAGE_PROMPTS.pr,
     },
   });
-  async function modelPreferences() {
-    const config = await settings.get();
-    const choice = (providerId: string, model: string, reasoningLevel: string) => ({
-      providerId: providerId.trim() || null, model: model.trim() || null,
-      ...(reasoningLevel && reasoningLevel !== "auto" ? { reasoningLevel } : {}),
-    });
-    return {
-      modelMap: {
-        orchestrator: choice(config.orchestratorProviderId, config.orchestratorModel, config.orchestratorReasoningLevel),
-        tdd: choice(config.tddProviderId, config.tddModel, config.tddReasoningLevel),
-        quality: choice(config.reviewProviderId, config.reviewModel, config.reviewReasoningLevel),
-        simplify: choice(config.simplifyProviderId, config.simplifyModel, config.simplifyReasoningLevel),
-        pr: choice(config.prProviderId, config.prModel, config.prReasoningLevel),
-      },
-      modelSelectionPolicy: "These are preferences, not fixed choices. Validate against the live catalog. Choose effort and skills for the task. The board uses these provider/model/effort preferences unless execution.modelOverrideReason explains why another choice fits this task better. execution.reason alone does not override a preference. Blank preferences leave the choice to the orchestrator. Settings apply to future planning; keep running workers and completed steps unchanged.",
-    };
-  }
   let disposed = false;
   bb.onDispose(() => { disposed = true; });
   const db = bb.storage.database();
@@ -431,10 +372,15 @@ export default async function plugin(bb: BbPluginApi) {
     stageContinuationMigration,
     ...sidebarMigrations,
     importMigration,
+    taskMapMigration,
   ]);
+  const taskMap = taskMapStore(db);
   const sidebarState = sidebar(bb, db, {
     preferredMains: () => db.prepare("SELECT p.project_id AS projectId, r.environment_id AS environmentId, r.initiator_thread_id AS threadId FROM worktree_delivery_runs r JOIN worktree_setup_projects p ON p.environment_id = r.environment_id").all() as Array<{ projectId: string; environmentId: string; threadId: string }>,
-    titleChoice: () => null,
+    titleChoice: () => {
+      const choice = taskMap.read().titles;
+      return choice?.providerId && choice.model ? { providerId: choice.providerId, model: choice.model } : null;
+    },
   });
 
   const readWorktreeState = db.prepare(
@@ -509,7 +455,7 @@ export default async function plugin(bb: BbPluginApi) {
   const stageContinuation = createStageContinuation(bb, db, () => disposed);
   const tddRepair = createTddRepair(bb, db, () => disposed);
   const setupAutomation = createSetupAutomation(bb, db, {
-    modelPreferences,
+    choices: () => taskMap.read(),
     useInitiatingThread: async () => (await settings.get()).useInitiatingThread,
     context(environmentId) {
       const state = readWorktreeState.get(environmentId) as WorktreeStateRow | undefined;
@@ -607,7 +553,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function startStageThread(
     environmentId: string,
-    requested: { providerId: string; model: string; prompt: string },
+    prompt: string,
     stage?: StageId,
     stageUpdatedAt?: number,
   ) {
@@ -653,12 +599,12 @@ export default async function plugin(bb: BbPluginApi) {
     if (step && state) {
       const prior = db.prepare("SELECT execution_json FROM worktree_stage_thread_launches WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
         .get(environmentId, state.stage, state.updated_at) as { execution_json: string | null } | undefined;
-      selected = prior?.execution_json ? JSON.parse(prior.execution_json) : await resolveStepExecution(bb.sdk, { environmentId, projectId: environment.projectId }, step.execution, (await modelPreferences()).modelMap[step.stage]);
+      selected = prior?.execution_json ? JSON.parse(prior.execution_json) : await resolveStepExecution(bb.sdk, { environmentId, projectId: environment.projectId }, step.execution);
       db.prepare("UPDATE worktree_stage_thread_launches SET execution_json = ? WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
         .run(JSON.stringify(selected), environmentId, state.stage, state.updated_at);
     }
-    const providerId = selected?.providerId ?? (requested.providerId.trim() || sourceThread.providerId);
-    const requestedModel = selected?.model ?? requested.model.trim();
+    const providerId = selected?.providerId ?? sourceThread.providerId;
+    const requestedModel = selected?.model;
     const canInheritExecution =
       providerId === sourceThread.providerId &&
       (!requestedModel || requestedModel === execution?.model);
@@ -714,7 +660,7 @@ export default async function plugin(bb: BbPluginApi) {
       },
       environment: { type: "reuse", environmentId },
       prompt: buildStagePrompt({
-        stage: stage ?? stageSchema.parse(state?.stage ?? "tdd"), prompt: requested.prompt, environmentId,
+        stage: stage ?? stageSchema.parse(state?.stage ?? "tdd"), prompt, environmentId,
         stageUpdatedAt: stageUpdatedAt ?? state?.updated_at, taskRevision: savedRevision,
         activeStepId: step?.id ?? null, previousThreadId: previous?.thread_id ?? sourceThread.id,
       }),
@@ -745,7 +691,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function launchStageThreadOnce(
     environmentId: string, stage: StageId, stageUpdatedAt: number,
-    requested: { providerId: string; model: string; prompt: string },
+    prompt: string,
     explicit = false,
   ) {
     if (disposed || paused(environmentId)) return null;
@@ -776,7 +722,7 @@ export default async function plugin(bb: BbPluginApi) {
       const candidates = [...await listThreads(environment.projectId), ...await listThreads(environment.projectId, true)];
       const orphan = candidates.find(thread => thread.environmentId === environmentId && thread.title === launchTitle(environmentId, stage, stageUpdatedAt));
       const liveWorker = orphan ?? await findLiveStageWorker(environmentId, stage);
-      const thread = liveWorker ?? await startStageThread(environmentId, requested, stage, stageUpdatedAt);
+      const thread = liveWorker ?? await startStageThread(environmentId, prompt, stage, stageUpdatedAt);
       saveStageThreadLaunch.run(environmentId, stage, stageUpdatedAt, "started", thread.id);
       setOwner.run(thread.id, environmentId, stageUpdatedAt);
       return thread;
@@ -797,36 +743,20 @@ export default async function plugin(bb: BbPluginApi) {
     if (blockedAttempt(environmentId)) throw new Error("Recorded checks are blocked; do not restart the same stage. Read context for the evidence.");
     const config = await settings.get();
     if (stage === "tdd") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, {
-        providerId: config.tddProviderId,
-        model: config.tddModel,
-        prompt: config.tddPrompt,
-      }, explicit);
+      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.tddPrompt, explicit);
     }
     if (stage === "quality") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, {
-        providerId: config.reviewProviderId,
-        model: config.reviewModel,
-        prompt: config.reviewPrompt,
-      }, explicit);
+      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.reviewPrompt, explicit);
     }
     if (stage === "simplify") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, {
-        providerId: config.simplifyProviderId,
-        model: config.simplifyModel,
-        prompt: config.simplifyPrompt,
-      }, explicit);
+      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.simplifyPrompt, explicit);
     }
     if (stage === "pr" && config.simplifyToPrMode === "ask" && !explicit) {
       addPendingStageThreadLaunch.run(environmentId, stage, stageUpdatedAt);
       return null;
     }
     if (stage === "pr") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, {
-        providerId: config.prProviderId,
-        model: config.prModel,
-        prompt: config.prPrompt,
-      }, explicit);
+      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.prPrompt, explicit);
     }
     return null;
   }
@@ -1026,7 +956,7 @@ export default async function plugin(bb: BbPluginApi) {
     const nextStep = saved.task?.setup ? nextSetupStep(saved.task.setup, state.active_step_id) : null;
     const executionRow = db.prepare("SELECT execution_json FROM worktree_stage_thread_launches WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
       .get(environmentId, state.stage, state.updated_at) as { execution_json: string | null } | undefined;
-    return { ...await modelPreferences(), environmentId, stage: state.stage, stageUpdatedAt: state.updated_at,
+    return { stepChoices: stepChoices(saved.task?.kind, taskMap.read()), environmentId, stage: state.stage, stageUpdatedAt: state.updated_at,
       ownerThreadId: state.owner_thread_id ?? null, taskRevision: saved.revision, task: saved.task,
       automaticSetup: setupAutomation.latest(environmentId) ?? null,
       orchestratorThreadId: setupAutomation.orchestrator(environmentId),
@@ -1058,8 +988,14 @@ export default async function plugin(bb: BbPluginApi) {
     const prepared = db.prepare("SELECT execution_json FROM worktree_stage_thread_launches WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
       .get(context.environmentId, state.stage, state.updated_at) as { execution_json: string | null } | undefined;
     task.setup = preserveCompletedSteps(current.task?.setup, task.setup, state.active_step_id);
-    if (task.setup) validateKindSteps(task, task.setup);
-    validateSetupRevision(current.task?.setup, task.setup, state.active_step_id, state.stage, Boolean(prepared?.execution_json || (launch && ["started", "starting"].includes(launch.status))));
+    const activeFixed = Boolean(prepared?.execution_json || (launch && ["started", "starting"].includes(launch.status)));
+    if (task.setup) {
+      validateKindSteps(task, task.setup);
+      // Settings bind steps that have not started; started and completed steps keep their choice.
+      const active = task.setup.steps.findIndex(step => step.id === state.active_step_id);
+      requireStepChoices(task.kind, task.setup.steps.slice(active < 0 ? 0 : active + Number(activeFixed)), taskMap.read());
+    }
+    validateSetupRevision(current.task?.setup, task.setup, state.active_step_id, state.stage, activeFixed);
     const correctedSelection = launch && ["failed", "blocked"].includes(launch.status) && !prepared?.execution_json &&
       JSON.stringify(activeSetupStep(current.task?.setup, state.active_step_id)?.execution) !== JSON.stringify(activeSetupStep(task.setup, state.active_step_id)?.execution);
     for (const step of task.setup?.steps ?? []) {
@@ -1219,7 +1155,7 @@ export default async function plugin(bb: BbPluginApi) {
     ]);
     const matches = skills.skills.filter(skill => (!skill.provider || !providerId || skill.provider === providerId) &&
       `${skill.name} ${skill.description ?? ""}`.toLowerCase().includes(skillQuery.toLowerCase()));
-    return { ...await modelPreferences(), providers: providers.map(provider => ({ id: provider.id, name: provider.displayName, available: provider.available })),
+    return { providers: providers.map(provider => ({ id: provider.id, name: provider.displayName, available: provider.available })),
       models: models?.models ?? [], modelLoadError: models?.modelLoadError ?? null,
       skills: matches.slice(0, 80).map(({ id, name, description, provider }) => ({ id, name, description, provider })), skillsTruncated: matches.length > 80 };
   }
@@ -1488,9 +1424,24 @@ export default async function plugin(bb: BbPluginApi) {
     try { await recovery; } finally { recovery = undefined; }
   }
 
+  async function readTaskMap(): Promise<TaskMapResult> {
+    const choices = taskMap.read();
+    return { ...taskMapLayout(), choices, ...await liveCatalog(bb.sdk, choices) };
+  }
+
+  async function taskMapHealth() {
+    const choices = taskMap.read();
+    if (!Object.keys(choices).length) return [];
+    try {
+      return (await liveCatalog(bb.sdk, choices)).problems.map(problem => ({ status: "task-map-unavailable", slot: problem.slot, error: problem.message }));
+    } catch (error) {
+      return [{ status: "task-map-unchecked", slot: null, error: `Could not read the live catalog: ${error instanceof Error ? error.message : String(error)}` }];
+    }
+  }
+
   async function health(projectId: string | null) {
     const board = await getBoard(projectId);
-    return (await Promise.all(board.cards.map(async card => {
+    return [...await taskMapHealth(), ...(await Promise.all(board.cards.map(async card => {
       const launch = readStageThreadLaunch.get(card.environmentId, card.stage, card.stageUpdatedAt) as StageThreadLaunchRow | undefined;
       const blocker = blockedAttempt(card.environmentId);
       const repair = blocker ? tddRepair.describe(card.environmentId, blocker.evidence, card.status === "active", paused(card.environmentId), card.hasPendingInteraction) : null;
@@ -1540,7 +1491,7 @@ export default async function plugin(bb: BbPluginApi) {
       return [{ environmentId: card.environmentId, projectId: card.projectId, stage: card.stage,
         stageUpdatedAt: card.stageUpdatedAt, status, attempts: launch.attempt_count,
         error, waitingForInput: card.hasPendingInteraction, hasLiveWork: card.status === "active" }];
-    }))).flat();
+    }))).flat()];
   }
 
   async function getBoard(projectId: string | null) {
@@ -1709,6 +1660,11 @@ export default async function plugin(bb: BbPluginApi) {
             }
           : {}),
       };
+    },
+    getTaskMap: () => readTaskMap(),
+    saveTaskMap: async ({ choices }) => {
+      taskMap.save(choices);
+      return readTaskMap();
     },
     startStageThread: async ({ environmentId }) => {
       const state = readWorktreeState.get(environmentId) as WorktreeStateRow | undefined;

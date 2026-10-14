@@ -29,6 +29,7 @@ import { cn } from "./lib/utils";
 import { ThreadInbox } from "./sidebar/ThreadInbox";
 import { ParentChip } from "./sidebar/ParentChip";
 import { SubagentsChip } from "./sidebar/SubagentsChip";
+import { TaskMapSettings } from "./task-map-settings";
 
 type Card = BoardResult["cards"][number];
 type Stage = BoardResult["stages"][number];
@@ -1396,6 +1397,12 @@ export default definePluginApp((app) => {
     icon: "Columns2",
     path: "board",
     component: TreelanesBoard,
+  });
+  app.slots.settingsSection({
+    id: "task-map",
+    title: "Task map",
+    description: "Harness, model and effort for each step of each task kind.",
+    component: TaskMapSettings,
   });
   app.slots.experimental_threadList({
     id: "inbox",

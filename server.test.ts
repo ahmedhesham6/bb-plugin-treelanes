@@ -179,10 +179,6 @@ describe("Board backend", () => {
     const sdk = sdkFor([design]);
     const { bb, harness } = createFakePluginHost({
       pluginId: "treelanes",
-      settings: {
-        tddProviderId: "codex",
-        tddModel: "gpt-5.6-sol",
-      },
       sdk: {
         ...sdk,
         threads: {
@@ -246,10 +242,6 @@ describe("Board backend", () => {
     const sdk = sdkFor([tdd]);
     const { bb, harness } = createFakePluginHost({
       pluginId: "treelanes",
-      settings: {
-        reviewProviderId: "codex",
-        reviewModel: "gpt-5.6-sol",
-      },
       sdk: {
         ...sdk,
         threads: {
@@ -295,7 +287,7 @@ describe("Board backend", () => {
     await harness.lifecycle.dispose();
   });
 
-  it("starts Simplify with its configured model and stage skill", async () => {
+  it("starts Simplify with the worktree thread's model and stage skill", async () => {
     const quality = worktreeThread({
       id: "thread-quality",
       projectId: "project-one",
@@ -359,8 +351,8 @@ describe("Board backend", () => {
 
     expect(spawned).toHaveLength(1);
     expect(spawned[0]).toMatchObject({
-      providerId: "claude-code",
-      model: "claude-fable-5-1",
+      providerId: "codex",
+      model: "gpt-5.6-sol",
       environment: { type: "reuse", environmentId: "environment-one" },
       prompt: expect.stringContaining(
         "Use the simplify skill.\nReduce needless code in the task diff and preserve behavior.",
@@ -500,8 +492,6 @@ describe("Board backend", () => {
       pluginId: "treelanes",
       settings: {
         simplifyToPrMode: "ask",
-        prProviderId: "codex",
-        prModel: "gpt-5.6-sol",
         prPrompt:
           "Create and watch this pull request. If a required check cannot pass, stop and report the blocker without opening a pull request.",
       },
@@ -613,8 +603,8 @@ describe("Board backend", () => {
 
     expect(spawned).toHaveLength(1);
     expect(spawned[0]).toMatchObject({
-      providerId: "codex",
-      model: "gpt-5.6-sol",
+      providerId: "claude-code",
+      model: "claude-opus-4-1",
       prompt: expect.stringContaining(
         "/babysit-pr",
       ),
@@ -877,10 +867,6 @@ describe("Board backend", () => {
     const sdk = sdkFor(threads);
     const { bb, harness } = createFakePluginHost({
       pluginId: "treelanes",
-      settings: {
-        reviewProviderId: "codex",
-        reviewModel: "gpt-5.6-sol",
-      },
       sdk: {
         ...sdk,
         threads: {

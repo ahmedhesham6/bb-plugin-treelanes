@@ -221,7 +221,8 @@ describe("saved stage evidence", () => {
   });
 
   it.each(["receipt", "user"])("waits in Design and uses the original orchestrator after %s start", async trigger => {
-    const t = await setup(false, { startInDesign: true, useInitiatingThread: true, orchestratorProviderId: "codex", orchestratorModel: "large", orchestratorReasoningLevel: "high" });
+    const t = await setup(false, { startInDesign: true, useInitiatingThread: true });
+    await t.harness.behavior.callRpc("saveTaskMap", { choices: { orchestrator: { providerId: "codex", model: "large", reasoningLevel: "high" } } });
     t.root.providerId = "codex";
     await t.harness.behavior.callAgentTool("treelanes_deliver", { stage: "tdd", task: t.task }, t.agent);
     expect(t.stage()).toBe("design");
@@ -288,31 +289,45 @@ describe("saved stage evidence", () => {
     expect(t.requests).toHaveLength(0);
   });
 
-  it("exposes editable model preferences in context and the live catalog", async () => {
-    const t = await setup(true, { reviewProviderId: "codex", reviewModel: "large" });
-    const catalog = JSON.parse(await t.harness.behavior.callAgentTool("treelanes_catalog", {}, t.agent) as string);
-    expect(catalog.modelMap.simplify).toEqual({ providerId: "claude-code", model: "claude-fable-5-1" });
-    expect(catalog.modelMap.quality).toEqual({ providerId: "codex", model: "large" });
-    expect(catalog.modelMap.tdd).toEqual({ providerId: null, model: null });
-    expect((await t.context()).modelMap).toEqual(catalog.modelMap);
-    expect(catalog.modelSelectionPolicy).toMatch(/execution.reason/);
+  it("saves task map choices and binds the planner to them", async () => {
+    const t = await setup(false, { useInitiatingThread: true });
+    t.root.providerId = "codex";
+    const choices = { "feature/build": { providerId: "codex", model: "large", reasoningLevel: "high" } };
+    await t.harness.behavior.callRpc("saveTaskMap", { choices });
+    const skills = kindTemplate({ kind: "feature", deliveryTarget: "pr" }).flatMap(step => step.skills);
+    t.harness.inspection.sdk.stub("skills.list", async () => ({ skills: [...new Set(skills)].map(id => ({ id, name: id, filePath: `/skills/${id}/SKILL.md`,
+      description: "Shipped", manageable: false, pluginId: "treelanes", provider: null, registrySkillId: null, scope: "plugin" })) }) as never);
+    await t.harness.behavior.callAgentTool("treelanes_deliver", { stage: "tdd", task: { ...t.task, kind: "feature", deliveryTarget: "pr" } }, t.agent);
+    expect((await t.context()).stepChoices).toEqual({ build: choices["feature/build"] });
+    const plan = (model: string) => ({ setup: { summary: "Feature", steps: kindTemplate({ kind: "feature", deliveryTarget: "pr" }).map(({ skills, ...step }) =>
+      ({ ...step, execution: { providerId: "codex", model: step.id === "build" ? model : "small", reasoningLevel: "high", skills, reason: "Fits." } })) } });
+    await expect(t.harness.behavior.callAgentTool("treelanes_apply_setup", plan("small"), t.agent))
+      .rejects.toThrow('Template step "build" must use model "large" from the Settings task map.');
+    await t.harness.behavior.callAgentTool("treelanes_apply_setup", plan("large"), t.agent);
+    await t.idle();
+    expect(t.requests.at(-1)).toMatchObject({ providerId: "codex", model: "large", reasoningLevel: "high" });
+    const next = await t.harness.lifecycle.reload(plugin);
+    disposals.push(() => next.harness.lifecycle.dispose());
+    expect(await next.harness.behavior.callRpc("getTaskMap", {})).toMatchObject({ choices });
   });
 
-  it.each([false, true])("applies the Simplify preference unless an explicit override exists: %s", async override => {
-    const t = await setup(true, { simplifyReasoningLevel: "high" });
-    const reason = "Use Codex small for this bounded diff; the preferred Fable model is unavailable.";
-    const execution = { providerId: "codex", model: "small", reasoningLevel: "low", skills: [], reason, ...(override ? { modelOverrideReason: reason } : {}) };
-    await t.harness.behavior.callAgentTool("treelanes_set_task", { ...t.task, setup: {
-      summary: "Fix and simplify", steps: [
-        { id: "fix", title: "Fix", stage: "tdd", instructions: "Fix the bug", checks: ["API regression"], execution },
-        { id: "clean", title: "Simplify", stage: "simplify", instructions: "Simplify the fix", checks: ["API regression"], execution },
-      ],
-    } }, t.agent);
-    await t.submit(await t.receipt());
-    await t.idle();
-    expect(t.stage()).toBe("simplify");
-    expect(t.requests.at(-1)).toMatchObject({ providerId: override ? "codex" : "claude-code", model: override ? "small" : "claude-fable-5-1", reasoningLevel: override ? "low" : "high" });
-    expect((await t.context()).execution.reason).toBe(reason);
+  it("reports unavailable saved choices in Settings and health", async () => {
+    const t = await setup();
+    t.harness.inspection.sdk.stub("providers.list", async () => [
+      { id: "codex", displayName: "Codex", available: true }, { id: "claude-code", displayName: "Claude Code", available: false },
+    ] as never);
+    const map = await t.harness.behavior.callRpc("saveTaskMap", { choices: {
+      "bug-fix/fix": { providerId: "codex", model: "retired" }, titles: { providerId: "claude-code" },
+    } }) as { problems: unknown[] };
+    expect(map.problems).toEqual([
+      { slot: "bug-fix/fix", message: "Model retired is not available for codex." },
+      { slot: "titles", message: "Harness claude-code is not available." },
+    ]);
+    const health = JSON.parse((await t.harness.behavior.runCli(["health", "project"])).stdout!);
+    expect(health.slice(0, 2)).toEqual([
+      { status: "task-map-unavailable", slot: "bug-fix/fix", error: "Model retired is not available for codex." },
+      { status: "task-map-unavailable", slot: "titles", error: "Harness claude-code is not available." },
+    ]);
   });
 
   it("rejects a saved setup that breaks the kind template", async () => {

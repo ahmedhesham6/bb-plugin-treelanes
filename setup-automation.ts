@@ -3,6 +3,7 @@ import type { TaskContext } from "./stage-evidence";
 import type { SetupPlan } from "./setup-plan";
 import { buildSetupPrompt, validateSetupProposal } from "./setup-request";
 import { resolveStepExecution } from "./step-execution";
+import { requireStepChoices, stepChoices, type Choices } from "./task-map";
 
 type Db = ReturnType<BbPluginApi["storage"]["database"]>;
 type Thread = { id: string; projectId: string; environmentId?: string | null; providerId: string;
@@ -35,7 +36,7 @@ CREATE INDEX worktree_setup_requests_env ON worktree_setup_requests(environment_
 export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
   context(environmentId: string): AutomationContext;
   useInitiatingThread(): Promise<boolean>;
-  modelPreferences(): Promise<{ modelMap: Record<string, { providerId: string | null; model: string | null; reasoningLevel?: string }> }>;
+  choices(): Choices;
   commit(request: SetupRequest, plan: SetupPlan): void;
   listThreads(projectId: string): Promise<Thread[]>;
   hasLiveWork(thread: Thread): boolean;
@@ -174,21 +175,24 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
     if (!execution?.model || !execution.reasoningLevel) throw new Error("The initiating thread must have explicit model and effort settings for setup planning.");
     const inheritedChoice = { providerId: source.providerId, model: execution.model, reasoningLevel: execution.reasoningLevel,
       permissionMode: execution.permissionMode ?? "auto", ...(execution.serviceTier ? { serviceTier: execution.serviceTier } : {}) };
-    const preference = (await hooks.modelPreferences()).modelMap.orchestrator;
+    const saved = hooks.choices().orchestrator;
     const reuseSource = await hooks.useInitiatingThread();
     if (reuseSource && hooks.hasLiveWork(source)) return;
-    const differentProvider = reuseSource && preference?.providerId && preference.providerId !== source.providerId;
-    const selected = !differentProvider && preference && (preference.model || preference.reasoningLevel || preference.providerId)
+    // The initiating thread keeps its harness; a saved choice for another harness applies only to a new thread.
+    const differentProvider = reuseSource && saved?.providerId && saved.providerId !== source.providerId;
+    const selected = saved?.providerId && !differentProvider
       ? await resolveStepExecution(bb.sdk, { environmentId: env, projectId: source.projectId }, {
-          providerId: inheritedChoice.providerId, model: inheritedChoice.model, reasoningLevel: inheritedChoice.reasoningLevel, skills: [], reason: "Use the saved orchestrator preference.",
-        }, preference) : inheritedChoice;
-    const choice: typeof inheritedChoice & { modelOverrideReason?: string } = job.prepared_json ? JSON.parse(job.prepared_json) : {
+          providerId: saved.providerId, model: saved.model ?? inheritedChoice.model,
+          reasoningLevel: saved.reasoningLevel ?? inheritedChoice.reasoningLevel,
+          skills: [], reason: "Use the Settings orchestrator choice.",
+        } as Parameters<typeof resolveStepExecution>[2]) : inheritedChoice;
+    const choice: typeof inheritedChoice = job.prepared_json ? JSON.parse(job.prepared_json) : {
       ...inheritedChoice, providerId: selected.providerId, model: selected.model, reasoningLevel: selected.reasoningLevel,
-      ...(differentProvider ? { modelOverrideReason: "Keep the initiating thread and its provider; changing harness requires another thread. Retain its current model and effort." } : {}),
     };
     const context = fresh(job);
     const prompt = buildSetupPrompt({ environmentId: env, requestId: job.id, taskRevision: context.taskRevision,
-      stage: context.stage, activeStepId: context.activeStepId, recoveryReason: job.reason, task: context.task! });
+      stage: context.stage, activeStepId: context.activeStepId, recoveryReason: job.reason, task: context.task!,
+      stepChoices: stepChoices(context.task!.kind, hooks.choices()) });
     fresh(job);
     if (hooks.disposed()) return;
     const claim = db.prepare("UPDATE worktree_setup_requests SET status = 'starting', attempts = attempts + 1, updated_at = ?, prepared_json = ? WHERE id = ? AND status = 'pending' AND attempts = ?")
@@ -243,8 +247,9 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       if (await waiting(other) || (other.id !== run.initiator_thread_id && hooks.hasLiveWork(other))) throw new Error("Another thread has live work or pending input.");
     }
     validateSetupProposal(context.task!, plan, context.stage, context.activeStepId, job.kind === "recovery");
-    const { modelMap } = await hooks.modelPreferences();
-    await Promise.all(plan.steps.map(step => resolveStepExecution(bb.sdk, { environmentId: job.environment_id, projectId: thread.projectId }, step.execution, modelMap[step.stage])));
+    const active = job.kind === "recovery" ? plan.steps.findIndex(step => step.id === context.activeStepId) : 0;
+    requireStepChoices(context.task!.kind, plan.steps.slice(Math.max(0, active)), hooks.choices());
+    await Promise.all(plan.steps.map(step => resolveStepExecution(bb.sdk, { environmentId: job.environment_id, projectId: thread.projectId }, step.execution)));
     fresh(job);
     if (hooks.disposed()) throw new Error("Plugin reloaded before setup submission.");
     return db.transaction(() => {

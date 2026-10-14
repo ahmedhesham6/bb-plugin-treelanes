@@ -5,6 +5,7 @@ import { normalizeLegacyDeliveryStages, requirePrWatch, setupPlanSchema, type Se
 import type { TaskContext } from "./stage-evidence";
 import { DELIVERY_SKILL_INSTRUCTION, IMPLEMENTATION_GUIDE } from "./stage-prompts";
 import { kindTemplate, validateKindSteps } from "./task-kinds";
+import type { Choices } from "./task-map";
 
 const operationalStages = new Set(["tdd", "quality", "simplify", "pr"]);
 export const setupProposalSchema = z
@@ -103,18 +104,21 @@ type SetupPromptInput = {
   activeStepId: string | null;
   recoveryReason: string | null;
   task?: Pick<TaskContext, "kind" | "deliveryTarget">;
+  /** Saved Settings choices for the kind's template steps, by step ID. */
+  stepChoices?: Choices;
 };
 
 export function buildSetupPrompt(input: SetupPromptInput): string {
-  const template = kindTemplate(input.task ?? {});
+  const template = kindTemplate(input.task ?? {}).map(step =>
+    input.stepChoices?.[step.id]?.providerId ? { ...step, execution: input.stepChoices[step.id] } : step);
   return [
     DELIVERY_SKILL_INSTRUCTION,
     IMPLEMENTATION_GUIDE,
     "You are the persistent task orchestrator. Plan the complete saved outcome, with only needed steps and children. Read /delivery's references/orchestration.md.",
-    "Read treelanes_get_context for the full saved task and treelanes_catalog for live execution choices. Follow its modelMap preferences and modelSelectionPolicy; explain alternatives in execution.modelOverrideReason. Submit treelanes_apply_setup, then end this turn. Do not edit product code.",
+    "Read treelanes_get_context for the full saved task and treelanes_catalog for live execution choices. Choose execution values the live catalog lists. Submit treelanes_apply_setup, then end this turn. Do not edit product code.",
     `Assignment: ${JSON.stringify({ environmentId: input.environmentId, requestId: input.requestId,
       taskRevision: input.taskRevision, stage: input.stage, activeStepId: input.activeStepId,
       recoveryReason: input.recoveryReason?.slice(0, 2048) ?? null })}`,
-    ...(template.length ? [`Task kind ${input.task!.kind}: copy these template steps in order with the same id, stage and checks, and put their skills in execution.skills. You may edit title and instructions and add steps, checks and skills. Template: ${JSON.stringify(template)}`] : []),
+    ...(template.length ? [`Task kind ${input.task!.kind}: copy these template steps in order with the same id, stage and checks, and put their skills in execution.skills. A template execution value comes from the Settings task map and binds that step's providerId, model and reasoningLevel. You may edit title and instructions and add steps, checks and skills. Template: ${JSON.stringify(template)}`] : []),
   ].join("\n");
 }
