@@ -1,4 +1,9 @@
+import { readdirSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+
+/** Skill folders the plugin ships in skills/. */
+export const shippedSkills = readdirSync(new URL("./skills", import.meta.url), { withFileTypes: true })
+  .filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
 
 type Sdk = BbPluginApi["sdk"];
 

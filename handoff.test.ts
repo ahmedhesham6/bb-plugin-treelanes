@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
-import { makeWorkspaceSdk } from "./test-workspace";
+import { makeWorkspaceSdk, shippedSkills } from "./test-workspace";
 import type { ProviderInfo, ThreadEventRow } from "@get-bb/plugin-sdk";
 
 const disposals: Array<() => Promise<void>> = [];
@@ -21,7 +21,7 @@ async function setup(assigned = true, settings: Record<string, string | boolean>
   const failedRequests = new Map<string, string>();
   const requests: Array<{ prompt?: string; providerId?: string; model?: string; reasoningLevel?: string }> = [];
   const { bb, harness } = createFakePluginHost({
-    pluginId: "workflow-board",
+    pluginId: "workflow-board", agentSkillIds: shippedSkills,
     settings: { startInDesign: false, useInitiatingThread: false, ...settings },
     sdk: {
       providers: {
@@ -354,6 +354,21 @@ describe("saved stage evidence", () => {
     expect(context.workspaceDigest).toBeUndefined();
     expect(context.automaticSetup.thread_id).toBe(planner.threadId);
     await expect(t.context()).rejects.toThrow(/502|unavailable/);
+  });
+
+  it("loads plugin skills for board threads but not for the setup worker", async () => {
+    const t = await setup(false);
+    await t.harness.behavior.callAgentTool("workflow_board_deliver", { stage: "tdd", task: t.task }, t.agent);
+    const configure = (thread: typeof t.root) => t.harness.behavior.resolveAgentConfiguration({
+      thread: { id: thread.id, title: thread.title, parentThreadId: thread.parentThreadId, sourceThreadId: null },
+      project: { id: "project", kind: "standard", name: "Project", gitRemoteUrl: null },
+      environment: { id: "env", name: "test", path: "/srv/worktree", workspaceProvisionType: "managed-worktree", branchName: "feat/test" },
+      host: { id: "host", name: "Host" }, provider: { id: "codex", model: "small" }, origin: { kind: null, pluginId: null },
+    });
+    expect((await configure(t.threads[1]!)).skills).toEqual([]);
+    const board = await configure(t.root);
+    expect(board.tools.length).toBeGreaterThan(0);
+    expect(board.skills).toEqual(shippedSkills);
   });
 
   it("automatically reaches PR Watch after TDD, Quality and Simplify, and keeps PR when the plan changes", async () => {
