@@ -26,6 +26,7 @@ import { Button } from "./components/ui/button";
 import { Icon } from "./components/ui/icon";
 import { Input } from "./components/ui/input";
 import { cn } from "./lib/utils";
+import { PLUGIN_ID } from "./plugin-id";
 import { ThreadInbox } from "./sidebar/ThreadInbox";
 import { ParentChip } from "./sidebar/ParentChip";
 import { SubagentsChip } from "./sidebar/SubagentsChip";
@@ -1394,7 +1395,7 @@ export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "board",
     title: "Treelanes",
-    icon: "Columns2",
+    icon: `${PLUGIN_ID}/mark`,
     path: "board",
     component: TreelanesBoard,
   });

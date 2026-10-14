@@ -9,14 +9,17 @@
     "typecheck": "tsc --noEmit"
   },
   "engines": {
-    "bb": ">=0.41",
+    "bb": ">=0.43",
     "bbPluginSdk": ">=0.4.34"
   },
   "bb": {
     "name": "Treelanes",
     "description": "Track Git worktrees and their threads through design, build, review, and merge, with a sidebar grouped by worktree.",
     "branding": {
-      "icon": "Columns2"
+      "icon": "./assets/icon.svg",
+      "experimental_icons": {
+        "mark": "./assets/icon.svg"
+      }
     },
     "server": "./server.ts",
     "app": "./app.tsx",
