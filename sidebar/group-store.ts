@@ -1,5 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { noInput } from "../rpc-input";
 
 const id = z.string().min(1).max(300);
 const main = z.object({ projectId: id, environmentId: id, threadId: id });
@@ -7,7 +8,7 @@ export type MainThread = z.infer<typeof main>;
 const order = z.object({ groupId: id, sortOrder: z.number().int() });
 export const groupDefinitions = {
   listGroups: {
-    input: z.object({}),
+    input: noInput,
     output: z.object({
       mains: z.array(main),
       preferred: z.array(main),
