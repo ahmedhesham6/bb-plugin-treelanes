@@ -38,7 +38,7 @@
       "source": {
         "git": {
           "url": "https://github.com/ahmedhesham6/bb-plugin-treelanes.git",
-          "ref": "main"
+          "range": "^0"
         }
       }
     }
