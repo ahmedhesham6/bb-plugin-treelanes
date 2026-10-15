@@ -74,8 +74,8 @@ flowchart LR
 
 ## Install
 
-Add the Treelanes marketplace, then install from it. bb then shows the full
-listing, with screenshots, under Plugins:
+Add the Treelanes marketplace, then install from it. bb installs the latest
+release and shows the full listing, with screenshots, under Plugins:
 
 ```sh
 bb marketplace add git:github.com/ahmedhesham6/bb-plugin-treelanes@main
