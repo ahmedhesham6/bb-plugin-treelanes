@@ -1,9 +1,24 @@
 # Skill sources
 
-Each skill folder here is an unchanged copy of its source. Do not edit copied
-files. To upgrade, run `scripts/sync-skills.sh` and review the diff.
+The table at the end maps each shipped skill to its source;
+`scripts/sync-skills.sh` reads it.
 
-Each copied skill keeps the MIT license of its upstream:
+## Owned and copied skills
+
+- **Owned** skills have the source `plugin`. Treelanes owns them: edit them
+  here. The sync script skips them.
+- **Copied** skills change only through `scripts/sync-skills.sh`; review the
+  diff after each sync. A `local:<name>` source is the folder `<name>` under
+  `$SKILLS_SOURCE`, the maintainer's skill folder, and has no commit. A
+  `pstack:<path>` source records the pstack commit.
+- Four copies leave out one sentence each that names a skill Treelanes does not
+  ship: babysit-pr, code-review, principle-minimize-reader-load and
+  principle-sequence-verifiable-units. Remove that sentence again after each
+  sync.
+
+## Licenses
+
+Each copied skill keeps the MIT license notice of its upstream:
 
 - grilling, tdd, codebase-design, diagnosing-bugs and code-review:
   <https://github.com/mattpocock/skills>, in
@@ -18,15 +33,7 @@ Each copied skill keeps the MIT license of its upstream:
 - The pstack skills: <https://github.com/backnotprop/pstack>, in
   [pstack-LICENSE](pstack-LICENSE).
 
-Local sources are not in Git, so they have no commit.
-
-Skills with source `plugin` have no other copy: this plugin owns them. Edit
-them here; the script leaves them alone. A `local:<name>` source is a folder
-named `<name>` under `$SKILLS_SOURCE`, the maintainer's skill folder.
-
-Some copies drop text that names skills this plugin does not ship: one
-sentence each in babysit-pr, code-review, principle-minimize-reader-load and
-principle-sequence-verifiable-units. Remove that text again after a sync.
+## Sources
 
 | Skill | Source | Commit |
 | --- | --- | --- |

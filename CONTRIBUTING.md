@@ -6,10 +6,9 @@ To report a security problem, read [SECURITY.md](SECURITY.md).
 
 ## Before you start
 
-- For a bug, open an issue. Give the bb version, the Treelanes version, the
-  steps, and what you saw.
-- For a large change, open an issue first, so that we can agree on the
-  approach before you write code.
+- For a bug, open an issue with the bug report form.
+- For a large change, open an issue first, so that we agree on the approach
+  before you write code.
 - Read [CONTEXT.md](CONTEXT.md). It defines the words that the code and docs
   use, such as Worktree Card, Saved Task and Settled Thread. Use the same
   words in code, tests, docs and pull requests.
@@ -27,6 +26,9 @@ npm run typecheck
 npm run build
 ```
 
+Set up is done when the last three commands pass. CI runs the same three
+checks on each pull request.
+
 ## Try a change in bb
 
 ```sh
@@ -43,18 +45,18 @@ has no data that you need.
 - Keep each pull request to one change.
 - Add or change a test for each change in behavior. Tests use Vitest and sit
   next to the code that they test.
-- Do not edit a copied skill in `skills/`. Read
-  [skills/SOURCES.md](skills/SOURCES.md) first. It tells you which skills
-  Treelanes owns and how to update a copy.
+- Edit only the skills that Treelanes owns.
+  [skills/SOURCES.md](skills/SOURCES.md) names them and tells how copied
+  skills update.
 - Write commit messages in the
   [Conventional Commits](https://www.conventionalcommits.org) form, for example
   `fix: keep a snoozed thread hidden after reload`.
 
 ## Open a pull request
 
-1. Make sure that `npm test`, `npm run typecheck` and `npm run build` pass.
-2. Tell what the change does and why.
-3. For a change that you can see in bb, add a screenshot.
+1. Tell what the change does and why.
+2. For a change that you can see in bb, add a screenshot.
+3. Wait for CI to pass.
 
 ## License
 
