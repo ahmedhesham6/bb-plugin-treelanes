@@ -1,7 +1,7 @@
 {
   "name": "bb-plugin-treelanes",
   "version": "0.1.0",
-  "description": "Git worktree board and sidebar: track each worktree through design, build, review and merge.",
+  "description": "Take each coding task from idea to merged pull request in its own Git worktree, with checks before every stage moves.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -19,7 +19,7 @@
   },
   "bb": {
     "name": "Treelanes",
-    "description": "Track Git worktrees and their threads through design, build, review, and merge, with a sidebar grouped by worktree.",
+    "description": "Take each coding task from idea to merged pull request in its own Git worktree, with checks before every stage moves.",
     "branding": {
       "icon": "./assets/icon.svg",
       "experimental_icons": {

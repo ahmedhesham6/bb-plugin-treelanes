@@ -1,0 +1,46 @@
+{
+  "$schema": "https://getbb.app/schemas/marketplace-v2.schema.json",
+  "schemaVersion": 2,
+  "name": "treelanes",
+  "displayName": "Treelanes",
+  "description": "The Treelanes plugin for bb.",
+  "plugins": [
+    {
+      "id": "treelanes",
+      "displayName": "Treelanes",
+      "description": "Take each coding task from idea to merged pull request in its own Git worktree, with checks before every stage moves. A board shows one card per worktree as agents move it through Design, TDD, Quality Loop, Simplify and PR Watch. A stage moves on only when its worker reports passing checks for the current files. The task map sets the harness, model and effort for each step. Needs an agent harness such as Claude Code or Codex, and the GitHub CLI for pull requests.",
+      "icon": {
+        "url": "./assets/icon.svg"
+      },
+      "category": "tasks-and-workflows",
+      "screenshots": [
+        "https://raw.githubusercontent.com/ahmedhesham6/bb-plugin-treelanes/main/docs/images/store/board.png",
+        "https://raw.githubusercontent.com/ahmedhesham6/bb-plugin-treelanes/main/docs/images/store/sidebar.png",
+        "https://raw.githubusercontent.com/ahmedhesham6/bb-plugin-treelanes/main/docs/images/store/task-map.png"
+      ],
+      "overview": "Each task gets one Git worktree, one card on the board, and its own agents. You agree on the design, the agents build and review, and you merge a pull request that is ready.\n\n## What you get\n\n- **Board**: one card per Git worktree, with its unsettled threads. Cards move through Tickets, Design, TDD, Quality Loop, Simplify and PR Watch to Done. Code Review has its own lane.\n- **Sidebar**: one Main Thread per worktree, with the worktree's other threads below it. Settle a thread to take it off the board, or snooze it until later.\n- **Task map**: a Settings section that sets the harness, model and effort for each step of each task kind. The board rejects a plan that differs from a saved choice.\n- **Delivery skills**: `/delivery`, `/grilling`, `/tdd`, `/simplify`, `/babysit-pr` and the skills they use ship with the plugin.\n\n## How it works\n\n```text\n/delivery Add a CSV export to the notes list\n  Design        the agent asks until the plan is clear; you accept it\n  TDD           tests first, then the code\n  Quality Loop  strict review and fixes, until no findings\n  Simplify      remove needless code\n  PR Watch      open the pull request, fix checks, answer reviews\n  Done          you merge\n```\n\nA stage moves on only when its worker sends a Completion Receipt: passing checks bound to the task revision and the current files. A failed turn retries in the same thread, at most twice. The board keeps every step through a bb restart.\n\n## Agent tools\n\nAgents use `treelanes_deliver`, `treelanes_get_context`, `treelanes_complete_stage`, `treelanes_move_card` and the other `treelanes_*` tools. People use `bb treelanes`; `bb treelanes help` lists every command.\n\n## Requirements\n\n- bb 0.43 or later, and Git.\n- At least one agent harness, such as Claude Code or Codex. Agent work counts against that harness's account and usage limits.\n- The GitHub CLI (`gh`), signed in, for PR Watch.\n\nSource, docs and issues: https://github.com/ahmedhesham6/bb-plugin-treelanes\n",
+      "tags": [
+        "git-worktree",
+        "kanban",
+        "coding-agents",
+        "pull-requests",
+        "code-review",
+        "tdd",
+        "sidebar",
+        "task-board",
+        "delivery"
+      ],
+      "author": {
+        "name": "Ahmed Hesham Abdelkader",
+        "github": "ahmedhesham6",
+        "url": "https://github.com/ahmedhesham6"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/ahmedhesham6/bb-plugin-treelanes.git",
+          "ref": "main"
+        }
+      }
+    }
+  ]
+}
