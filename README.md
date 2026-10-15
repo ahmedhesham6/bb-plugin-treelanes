@@ -21,7 +21,7 @@ Treelanes is a plugin for [bb](https://github.com/get-bb/bb), an app that runs
 coding agents. It adds a board, a sidebar, and a delivery workflow for Git
 worktrees.
 
-![The Treelanes board with worktree cards in Tickets, Design, TDD, Quality Loop and PR Watch](docs/images/board.png)
+![The Treelanes board and sidebar, with worktree cards in Tickets, Design, TDD and Quality Loop](docs/images/board-hero.png)
 
 ## Why Treelanes
 
@@ -105,6 +105,8 @@ A new install starts empty. A thread appears on the board when it is in a Git
 worktree and is not settled.
 
 ## Board
+
+![The full Treelanes board, from Tickets to Done](docs/images/board.png)
 
 The board ignores threads outside Git worktrees. It hides each Settled
 Thread. A card leaves the board when its worktree has no unsettled threads.
