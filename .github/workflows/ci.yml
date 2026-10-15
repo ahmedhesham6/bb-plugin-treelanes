@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels its older runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -20,6 +25,11 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
+      - name: Check the store listing against the bb marketplace schema
+        run: |
+          curl -fsSL https://getbb.app/schemas/marketplace-v2.schema.json -o "$RUNNER_TEMP/marketplace-v2.schema.json"
+          npx --yes -p ajv-cli@5 -p ajv-formats@3 ajv validate --spec=draft2020 -c ajv-formats \
+            -s "$RUNNER_TEMP/marketplace-v2.schema.json" -d marketplace.json
       - name: Install the bb CLI for the plugin build
         run: npm install --global bb-app@0.46.0
       - run: npm run build

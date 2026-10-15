@@ -27,7 +27,8 @@ npm run build
 ```
 
 Set up is done when the last three commands pass. CI runs the same three
-checks on each pull request.
+checks on each pull request, and also checks `marketplace.json` against bb's
+marketplace schema.
 
 ## Try a change in bb
 
