@@ -84,7 +84,10 @@ Each `*.test.ts` or `*.test.tsx` file sits next to the code that it tests.
 
 ## Open a pull request
 
-1. Tell what the change does and why.
+1. Fill in the pull request template. It follows the
+   [visual-pr](https://github.com/humanlayer/skills/tree/main/plugins/visual-pr)
+   format from HumanLayer: a one-sentence reason, short reviewer notes, and a
+   change outline in small visual views.
 2. For a change that you can see in bb, add a screenshot.
 3. Wait for CI to pass.
 

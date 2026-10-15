@@ -219,6 +219,9 @@ report a security problem, read [SECURITY.md](SECURITY.md).
   [T3 Code](https://github.com/pingdotgg/t3code).
 - The sidebar code started as a copy of an MIT-licensed sidebar plugin by
   Michael Yong. Its license notice is in [sidebar/LICENSE](sidebar/LICENSE).
+- The pull request template follows the
+  [visual-pr](https://github.com/humanlayer/skills/tree/main/plugins/visual-pr)
+  format from HumanLayer.
 - The shipped skills come from Matt Pocock
   ([mattpocock/skills](https://github.com/mattpocock/skills)), HumanLayer
   ([humanlayer/skills](https://github.com/humanlayer/skills)), Cursor

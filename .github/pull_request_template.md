@@ -1,6 +1,20 @@
-## What and why
+<!-- This template follows the visual-pr format from HumanLayer:
+     https://github.com/humanlayer/skills/tree/main/plugins/visual-pr -->
 
-<!-- What the change does and why. Link the issue, for example "Fixes #12". -->
+## Why the change
+
+<!-- One sentence: the problem this pull request solves and what it makes possible.
+     Link the issue, for example "Fixes #12". -->
+
+## Special things to note
+
+<!-- One to three reviewer warnings, migrations or surprising decisions, or "None." -->
+
+## Change outline
+
+<!-- The smallest /show-me views that explain the change: a file tree, pseudocode,
+     a typed shape, a call tree or a Mermaid diagram. Use `diff` blocks for a
+     change to an existing shape. -->
 
 ## Checks
 
