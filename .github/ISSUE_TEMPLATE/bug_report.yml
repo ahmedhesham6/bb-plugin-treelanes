@@ -1,0 +1,45 @@
+name: Bug report
+description: Something in Treelanes does not work as it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Tell what you did, what you expected, and what you saw.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to show the problem
+      placeholder: |
+        1. Open the Treelanes board.
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: treelanes-version
+    attributes:
+      label: Treelanes version
+      description: Run `bb plugin list` and copy the treelanes line.
+    validations:
+      required: true
+  - type: input
+    id: bb-version
+    attributes:
+      label: bb version
+      description: Run `bb --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: health
+    attributes:
+      label: Health output
+      description: Run `bb treelanes health` and paste the output. Remove private data first.
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Add a screenshot if the problem is visible in bb.

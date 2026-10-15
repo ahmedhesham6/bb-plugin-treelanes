@@ -1,6 +1,8 @@
 # Contributing to Treelanes
 
 Thank you for your help. Bug reports, fixes, docs and new ideas are welcome.
+Everyone in this project follows the [code of conduct](CODE_OF_CONDUCT.md).
+To report a security problem, read [SECURITY.md](SECURITY.md).
 
 ## Before you start
 
