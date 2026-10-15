@@ -101,20 +101,34 @@ To build from a checkout, read [CONTRIBUTING.md](CONTRIBUTING.md).
 ![The full Treelanes board, from Tickets to Done](docs/images/board.png)
 
 The board shows one card per Git worktree, with the worktree's Unsettled
-Threads. A card leaves the board when all its threads are settled. New work or
-attention makes a settled thread unsettled again.
+Threads. All threads in a worktree share its stage. A card leaves the board
+when all its threads are settled; new work or attention brings a thread back.
 
-The worktree owns the stage, and all its threads share it. Drag a card to
-assign work by hand: a move to the next stage, such as Design to TDD, starts
-that stage's worker, and a jump to another stage only moves the card. A live
-stage worker blocks a conflicting move. Agents keep the Design Gate and the
-Code Review boundary, and move a Saved Task through Implementation one stage at
-a time.
+A hand move comes from a drag or `bb treelanes move`:
 
-An automatic move needs a Completion Receipt from the Stage Owner. Before each
-move, the board checks the receipt's task revision, stage revision, required
-check names, and complete worktree digest. Done needs bb to confirm a merged
-pull request whose head branch matches the worktree.
+```text
+move card to stage
+  stage worker live or starting      → refused
+  stage is Done                      → needs a merged pull request for this branch
+  saved setup                        → only Design → its first step
+  next stage (Design → TDD, TDD → Quality Loop, …)
+                                     → moves, and starts that stage's worker
+  any other stage                    → moves only
+```
+
+An automatic move comes from the Stage Owner:
+
+```text
+on Completion Receipt
+  task revision, stage revision and worktree digest match the current state
+  each required check passed, or has a diagnosed base or environment failure
+    → the card moves to the next step, and the board starts its worker
+  else
+    → not recorded; the card shows the Blocked Attempt
+```
+
+Agents keep the Design Gate and the Code Review boundary, and move a Saved Task
+through Implementation one stage at a time.
 
 Select a worktree card to open its newest unsettled thread in the right pane.
 Select a listed thread to open that thread. The pane also has an action that
@@ -138,11 +152,18 @@ restore, or "Use as main thread". Drag a main row to move its worktree. Drag a
 child to change its order within that worktree. Focus the drag handle and use
 arrow keys for keyboard movement.
 
-A saved main-thread choice takes priority. For a new group, the sidebar prefers
-the board's initiating thread, then the oldest root in the worktree, then its
-oldest visible member. Pinned children raise their worktree into Pinned.
-Snoozed and Settled state remains per thread. A group stays in Inbox while any
-member has active work.
+Each worktree picks its Main Thread in this order:
+
+```text
+main thread for a worktree
+  1. the thread saved with "Use as main thread"
+  2. the board's initiating thread
+  3. the oldest root thread in the worktree
+  4. the oldest visible thread in the worktree
+```
+
+Pinned children raise their worktree into Pinned. Snoozed and Settled state
+stays per thread. A group stays in Inbox while any member has active work.
 
 The thread header shows parent and child chips. PR badges use bb's branch
 lookup; a branch without a PR has no badge.
@@ -155,13 +176,18 @@ Open Settings → Plugins → Treelanes.
 
 - **Task map**: one row for each template step of each task kind (feature,
   bug fix, refactor, perf), plus rows for the orchestrator and automatic
-  titles. Each row picks a harness, model, and effort from the live catalogs;
-  "Orchestrator chooses" leaves the choice open. A saved choice binds setup
-  planning for steps that have not started, and the board rejects a plan that
-  changes it. Settings and `bb treelanes health` report a saved choice that the
-  live catalog cannot run. A saved orchestrator harness that differs from the
-  initiating thread starts a new orchestrator thread; an unset model or effort
-  uses that harness's catalog default.
+  titles. Each row picks a harness, model, and effort from the live catalogs.
+
+  ```text
+  plan a template step
+    saved harness, model, effort  → the plan must use them; a plan that differs is rejected
+    "Orchestrator chooses"        → the orchestrator picks from the live catalog
+    saved choice not in catalog   → Settings and `bb treelanes health` report it
+  ```
+
+  A saved orchestrator harness that differs from the initiating thread starts a
+  new orchestrator thread. An unset model or effort uses the harness's catalog
+  default.
 - **Automatic subthread titles**: off by default. When on, the harness and
   model from the task map's titles row write short sidebar titles in a short
   hidden thread. Custom names stay.

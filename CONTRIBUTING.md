@@ -40,11 +40,41 @@ bb plugin dev
 a file. Treelanes reads and changes board and sidebar data, so use a bb that
 has no data that you need.
 
+## Find your way
+
+Each `*.test.ts` or `*.test.tsx` file sits next to the code that it tests.
+
+```text
+.
+├── server.ts               # plugin backend: board state, RPCs, CLI, agent tools, recovery
+├── app.tsx                 # board panel, thread pane, app slot registration
+├── workflow.ts             # stage IDs and labels
+├── stage-evidence.ts       # Saved Task and Completion Receipt schemas, worktree digest
+├── stage-prompts.ts        # stage worker prompts
+├── delivery-plan.ts        # deliveryStages and check rules
+├── setup-plan.ts           # Task Setup schema and revision rules
+├── setup-request.ts        # setup proposals and the setup prompt
+├── setup-automation.ts     # Setup Requests: planning and dispatch
+├── step-execution.ts       # Execution Choice checks against live catalogs
+├── stage-continuation.ts   # continuation after a turn with no receipt
+├── tdd-repair.ts           # repair continuation
+├── thread-retry.ts         # Same-thread Retry
+├── task-kinds.ts           # task kind templates and skill IDs
+├── task-map.ts             # task map choices, planner rule, catalog check
+├── task-map-settings.tsx   # task map Settings section
+├── import-data.ts          # bb treelanes import
+├── plugin-id.ts            # plugin ID from package.json
+├── sidebar/                # sidebar: thread list, lifecycle, titles
+├── components/ lib/ hooks/ # shared UI parts
+├── skills/                 # shipped skills; SOURCES.md maps each source
+├── scripts/sync-skills.sh  # updates the copied skills
+└── docs/                   # delivery rules and README images
+```
+
 ## Make a change
 
 - Keep each pull request to one change.
-- Add or change a test for each change in behavior. Tests use Vitest and sit
-  next to the code that they test.
+- Add or change a Vitest test for each change in behavior.
 - Edit only the skills that Treelanes owns.
   [skills/SOURCES.md](skills/SOURCES.md) names them and tells how copied
   skills update.

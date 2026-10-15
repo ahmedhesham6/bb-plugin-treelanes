@@ -59,16 +59,33 @@ task uses the full stage chain.
 
 ### Task setups
 
-A `setup` replaces `deliveryStages` with explicit steps:
+A `setup` replaces `deliveryStages` with explicit steps. `setup-plan.ts` and
+`step-execution.ts` hold the schemas:
 
-- A setup has 1 to 24 steps. It can repeat a stage, add a check step, or omit
-  work the task does not need. PR Watch can only be last. Each other step has
-  at least one check, and common and stage checks add together.
-- Each step has a stable ID, title, stage, instructions, checks and an
-  Execution Choice. `execution.providerId` selects the harness. The model and
-  effort match the live provider catalog. Each skill exists and matches the
-  provider or has no provider limit. The board rejects a missing or ambiguous
-  choice and puts no default in its place.
+```ts
+type Setup = {
+  summary: string;
+  steps: SetupStep[];           // 1 to 24; PR Watch only as the last step
+};
+type SetupStep = {
+  id: string;                   // stable across revisions
+  title: string;
+  stage: "tdd" | "quality" | "simplify" | "pr";   // a stage can repeat
+  instructions: string;
+  checks: string[];             // at least one, except PR Watch
+  execution: {                  // the Execution Choice
+    providerId: string;         // the harness
+    model: string;              // from the live catalog of that harness
+    reasoningLevel: string;     // an effort that the model supports
+    skills: string[];           // skill IDs for that harness, or with no harness limit
+    reason: string;
+  };
+};
+```
+
+- Common and stage checks add to each step's checks.
+- The board rejects a missing or ambiguous choice and puts no default in its
+  place.
 - Saved task map choices bind the template steps that have not started. The
   [README](../README.md#settings) describes the task map.
 - The board stores the resolved choice before dispatch.
@@ -94,29 +111,60 @@ setup to finish.
 
 ### Automatic Delivery
 
-1. The caller sends `treelanes_deliver` or
-   `bb treelanes deliver '<json>'` with `{ "stage": "tdd", "task": { ... } }`
-   once, then ends its turn. The task carries the outcome, scope, decisions,
-   constraints, confirmations, checks and allowed actions, with no `setup` or
-   `deliveryStages`. A repeat of the same request starts no second worker.
-2. The board saves a Setup Request and starts a visible setup worker. It uses
-   the initiating thread's provider, model, effort and permission limit,
-   unless the task map saves an orchestrator choice. The setup worker is a
-   normal child thread: the SDK has no structured inference call, so Treelanes
-   needs no extra service or credential.
-3. The setup worker reads context, the live catalog and Checked Setups, then
-   submits `treelanes_apply_setup`. The board accepts only the setup proposal;
-   the Saved Task keeps its authority. Each step's choices must resolve
-   against the live catalogs.
-4. The board dispatches the first step after the setup worker is idle. The
-   setup thread stays as the task orchestrator, and later workers are its
-   children.
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant O as Orchestrator
+    participant B as Board
+    participant W as Stage worker
+    U->>O: /delivery task
+    O->>B: treelanes_deliver, once
+    O->>U: Design questions until the plan is clear
+    U->>O: accept the design
+    O->>B: Design receipt opens the Design Gate
+    B->>O: Setup Request
+    O->>B: treelanes_apply_setup
+    loop each Setup Step
+        B->>W: start the step with the Saved Task and prior result
+        W->>B: Completion Receipt
+    end
+    B-->>U: pull request ready to merge
+```
 
-Setup Requests have durable `pending`, `starting`, `started`, `applied`,
-`stale` and `blocked` states. A conditional SQL claim stops duplicate starts.
-After a lost spawn reply, the claim stays while recovery looks for the worker
-by its saved title. Each request gets at most two start attempts. Once a thread
-exists, the board keeps it. Exhausted attempts stay blocked and show in health.
+- `treelanes_deliver` or `bb treelanes deliver '<json>'` takes
+  `{ "stage": "tdd", "task": { ... } }`. The task carries the outcome, scope,
+  decisions, constraints, confirmations, checks and allowed actions, with no
+  `setup` or `deliveryStages`. The caller ends its turn after it queues the
+  request. A repeat of the same request starts no second worker.
+- The user can also open the Design Gate by moving the card to TDD.
+- The orchestrator is the initiating thread when "Use the initiating thread as
+  orchestrator" is on and the task map's orchestrator harness is unset or the
+  same. Otherwise the board starts a visible orchestrator thread. It is a
+  normal child thread: the SDK has no structured inference call, so Treelanes
+  needs no extra service or credential. Later workers are its children.
+- The board accepts only the setup proposal; the Saved Task keeps its
+  authority. Each step's choices must resolve against the live catalogs. The
+  first step starts after the orchestrator is idle.
+
+Each Setup Request moves through durable states:
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> starting: claim a start attempt
+    starting --> started: worker thread exists
+    starting --> pending: start lease expires
+    starting --> blocked: lease expires after two attempts
+    pending --> blocked: a start fails twice
+    blocked --> started: worker thread found
+    started --> applied: board accepts the setup
+    applied --> [*]
+```
+
+Before `applied`, a change to the task or stage marks a request `stale`. A
+conditional SQL claim stops duplicate starts. After a lost spawn reply, the
+claim stays while recovery looks for the worker by its saved title. Once a
+thread exists, the board keeps it. A blocked request shows in health.
 
 If the task owner changes the Saved Task before the first plan applies, the
 board replaces the Setup Request with one for the current revision. This also
@@ -131,6 +179,18 @@ Inspect choices with `bb treelanes catalog [provider-id] [skill-query]`, save
 the task with its setup, then run `bb treelanes start` once.
 
 ## Failures and recovery
+
+```mermaid
+flowchart LR
+    F{What went wrong?}
+    F -->|worker launch failed| L[Launch recovery]
+    F -->|turn failed at runtime| R[Same-thread Retry]
+    F -->|check failed, repair known| C[Repair continuation]
+    F -->|turn ended with no receipt| M[Missing-receipt continuation]
+    F -->|other technical blocker| H[Orchestrator help]
+    F -->|in-scope repair needs a new plan| P[Plan Recovery]
+    F -->|user wants changed work| O[Reopen]
+```
 
 ### Launch recovery
 
