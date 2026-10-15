@@ -1,0 +1,46 @@
+name: Release
+
+# Runs after CI passes on a push to main. scripts/release.sh picks the version
+# from the commit types since the last tag, then tags and publishes it.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Release only the commit that CI checked
+        id: tip
+        run: |
+          if [ "$(git rev-parse HEAD)" = "${{ github.event.workflow_run.head_sha }}" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main moved past ${{ github.event.workflow_run.head_sha }}; its own CI run releases it."
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.tip.outputs.current == 'true'
+        with:
+          node-version: 24
+      - name: Tag and publish
+        if: steps.tip.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          scripts/release.sh

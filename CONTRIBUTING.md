@@ -70,6 +70,7 @@ Each `*.test.ts` or `*.test.tsx` file sits next to the code that it tests.
 ├── components/ lib/ hooks/ # shared UI parts
 ├── skills/                 # shipped skills; SOURCES.md maps each source
 ├── scripts/sync-skills.sh  # updates the copied skills
+├── scripts/release.sh      # picks the next version, tags and publishes it
 └── docs/                   # delivery rules, README and store images
 ```
 
@@ -92,6 +93,24 @@ Each `*.test.ts` or `*.test.tsx` file sits next to the code that it tests.
    change outline in small visual views.
 2. For a change that you can see in bb, add a screenshot.
 3. Wait for CI to pass.
+
+## Releases
+
+After CI passes on a push to `main`, the Release workflow runs
+`scripts/release.sh`. The commit types since the last tag decide the version:
+
+```text
+feat                               → minor   0.1.0 → 0.2.0
+fix, perf                          → patch   0.1.0 → 0.1.1
+type! or a BREAKING CHANGE: footer → major   1.2.3 → 2.0.0   (minor before 1.0.0)
+docs, chore, ci, test, refactor    → no release
+```
+
+The workflow commits the new version to `package.json`, tags it `vX.Y.Z`, and
+publishes a GitHub release with notes. The marketplace entry installs the
+highest `^0` release, and `bb plugin update` moves to the next one. Publish
+each fix as a new release: bb refuses a plugin whose tag moved to another
+commit.
 
 ## License
 
