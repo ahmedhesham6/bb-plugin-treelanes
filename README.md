@@ -74,11 +74,23 @@ flowchart LR
 
 ## Install
 
+Add the Treelanes marketplace, then install from it. bb then shows the full
+listing, with screenshots, under Plugins:
+
+```sh
+bb marketplace add git:github.com/ahmedhesham6/bb-plugin-treelanes@main
+bb plugin install treelanes@treelanes
+```
+
+Or install straight from Git:
+
 ```sh
 bb plugin install git:https://github.com/ahmedhesham6/bb-plugin-treelanes
 ```
 
-To build from a checkout, read [CONTRIBUTING.md](CONTRIBUTING.md).
+To build from a checkout, read [CONTRIBUTING.md](CONTRIBUTING.md). The store
+listing lives in `marketplace.json` and `PLUGIN_OVERVIEW.md`; a test keeps them
+in step with `package.json`.
 
 ## Quick start
 

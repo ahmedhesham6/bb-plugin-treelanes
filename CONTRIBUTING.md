@@ -63,12 +63,13 @@ Each `*.test.ts` or `*.test.tsx` file sits next to the code that it tests.
 ├── task-map.ts             # task map choices, planner rule, catalog check
 ├── task-map-settings.tsx   # task map Settings section
 ├── import-data.ts          # bb treelanes import
+├── marketplace.json        # store listing; its overview copies PLUGIN_OVERVIEW.md
 ├── plugin-id.ts            # plugin ID from package.json
 ├── sidebar/                # sidebar: thread list, lifecycle, titles
 ├── components/ lib/ hooks/ # shared UI parts
 ├── skills/                 # shipped skills; SOURCES.md maps each source
 ├── scripts/sync-skills.sh  # updates the copied skills
-└── docs/                   # delivery rules and README images
+└── docs/                   # delivery rules, README and store images
 ```
 
 ## Make a change
