@@ -8,6 +8,7 @@ import { captureWorkspace, completionEvidenceSchema, taskContextSchema } from ".
 import { nextDeliveryStage, requiredStageChecks } from "./delivery-plan";
 import { activeSetupStep, nextSetupStep, normalizeLegacyDeliveryStages, preserveCompletedSteps, requirePrWatch, validateSetupRevision } from "./setup-plan";
 import { resolveStepExecution } from "./step-execution";
+import { noInput } from "./rpc-input";
 import { validateKindSteps } from "./task-kinds";
 import { createSetupAutomation, setupAutomationMigration } from "./setup-automation";
 import { createThreadRetry, threadRetryMigration } from "./thread-retry";
@@ -143,7 +144,7 @@ export const rpcContract = defineRpcContract({
     input: z.object({ environmentId: z.string() }).strict(),
     output: z.object({ threadId: z.string() }),
   },
-  getTaskMap: { input: z.object({}).strict(), output: z.custom<TaskMapResult>() },
+  getTaskMap: { input: noInput, output: z.custom<TaskMapResult>() },
   saveTaskMap: { input: z.object({ choices: choicesSchema }).strict(), output: z.custom<TaskMapResult>() },
 });
 
