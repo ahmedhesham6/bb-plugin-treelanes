@@ -134,6 +134,8 @@ An automatic move comes from the Stage Owner:
 on Completion Receipt
   task revision, stage revision and worktree digest match the current state
   each required check passed, or has a diagnosed base or environment failure
+  (a base failure names its base commit)
+  at least one required check passed, if the stage has required checks
     → the card moves to the next step, and the board starts its worker
   else
     → not recorded; the card shows the Blocked Attempt

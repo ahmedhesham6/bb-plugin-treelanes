@@ -27,7 +27,7 @@ For coding delivery, read `/ponytail` as the implementation guide; default to fu
 
 | Stage | Skill and result |
 | --- | --- |
-| Design | `/grilling`: resolve open choices and confirm shared understanding. Keep the Design Gate until accepted. |
+| Design | `/grilling`, with `/bug-hunt`'s Design branch for each external call and stored state: resolve open choices and confirm shared understanding. Keep the Design Gate until accepted. |
 | TDD | `/tdd`: implement through accepted test interfaces. |
 | Quality | `/thermo-nuclear-code-quality-review`: review the task diff and fix valid findings within scope. |
 | Simplify | `/simplify`: reduce needless code while keeping behavior. |
@@ -39,7 +39,7 @@ Normal delivery is TDD → Quality → Simplify → PR Watch. Findings may justi
 
 Design, TDD, Quality, and Simplify use `treelanes_complete_stage` or `bb treelanes complete '<JSON>'`. After the last edit and check, read fresh context. Submit its `stage`, `stageUpdatedAt`, `taskRevision`, and `workspaceDigest`, plus `checks`, `decisionsResolved`, `openFindings`, and `summary`.
 
-Each check has its exact effective name, actual status, and evidence. Skipped, missing, failed, or blocked checks cannot count as passed. For PR delivery, diagnosed base or environment failures may permit stage progress with their actual status; use the check classification in [recovery](references/recovery.md). Set `decisionsResolved: false` for an open human choice. Changed task or file evidence needs the recovery path, not a reused receipt.
+Each check has its exact effective name, actual status, and evidence. For a check shown by a run, quote the command and its output. A check on external API calls passes with the evidence `no external API call` when the change makes none. Skipped, missing, failed, or blocked checks cannot count as passed. For PR delivery, diagnosed base or environment failures may permit stage progress with their actual status; use the check classification in [recovery](references/recovery.md). Set `decisionsResolved: false` for an open human choice. Changed task or file evidence needs the recovery path, not a reused receipt.
 
 Only `recorded: true` permits a completion marker. End with the stage's exact marker on a line of its own:
 

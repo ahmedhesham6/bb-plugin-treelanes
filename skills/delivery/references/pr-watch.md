@@ -2,6 +2,8 @@
 
 Use the saved task and current branch/base. Keep its authority limits. `/babysit-pr` owns the check, review, rebase, and watch loop after the PR exists. PR Watch owns getting required checks green. Earlier stages may hand off diagnosed base or environment failures with their actual results. Read those limits, diagnose remaining failures, make authorized fixes, rerun affected checks, and keep watching. Do not report ready to merge while any required check fails, is missing, or remains pending. Merge stays with the user; Done requires a verified merge.
 
+Follow `/pr-proof` for run proof, bot findings, ready timing and the Not verified section.
+
 ## Prepare the PR
 
 Before creating the PR and before every push, inspect the full branch diff against the Worktree base, plus staged, unstaged, and untracked changes. Stage only files required for the saved task, including its tests, config, migrations, generated files, and locks.

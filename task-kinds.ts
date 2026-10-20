@@ -18,6 +18,12 @@ const quality: TemplateStep = {
   checks: ["Strict review reports no findings."],
   skills: ["thermo-nuclear-code-quality-review", "principle-minimize-reader-load"],
 };
+const bugHunt: TemplateStep = {
+  id: "bug-hunt", stage: "quality", title: "Hunt failure paths in the diff",
+  instructions: "Follow the Diff branch of /bug-hunt on the task diff and fix every finding within scope.",
+  checks: ["Each external call and stored state in the diff has a test or an accepted-risk line for every failure question."],
+  skills: ["bug-hunt"],
+};
 const simplify: TemplateStep = {
   id: "simplify", stage: "simplify", title: "Simplify the task changes",
   instructions: "Reduce needless code in the task diff without changing behavior.",
@@ -28,17 +34,18 @@ const pr: TemplateStep = {
   id: "pr", stage: "pr", title: "PR Watch",
   instructions: "Open or reuse the pull request and watch it until it is ready to merge.",
   checks: [],
-  skills: ["babysit-pr", "show-me"],
+  skills: ["babysit-pr", "show-me", "pr-proof"],
 };
 const diagnose = ["diagnosing-bugs", "principle-fix-root-causes"];
+const liveCall = "Each external API the change calls answered one real request (sandbox, dev, or local stack), and the test fixture comes from that reply; or the PR's Not verified list names it with the post-merge check.";
 
 const templates: Record<TaskKind, TemplateStep[]> = {
   feature: [{
     id: "build", stage: "tdd", title: "Build the change",
     instructions: "Build the change test-first through the accepted test interfaces, then run it on the surface it touches.",
-    checks: ["The change works on the surface it touches, shown by a run, not unit tests alone."],
+    checks: ["The change works on the surface it touches, shown by a run, not unit tests alone.", liveCall],
     skills: ["tdd", "ponytail", "principle-model-the-domain", "principle-test-behavior-not-implementation"],
-  }, quality, simplify],
+  }, quality, bugHunt, simplify],
   "bug-fix": [{
     id: "reproduce", stage: "tdd", title: "Reproduce the defect",
     instructions: "Reproduce the reported defect and capture its failing output before any fix.",
@@ -52,9 +59,9 @@ const templates: Record<TaskKind, TemplateStep[]> = {
   }, {
     id: "fix", stage: "tdd", title: "Fix the defect",
     instructions: "Commit a failing test for the reproduction, then fix the root cause in a later commit.",
-    checks: ["The same reproduction now passes and the failing test commit comes before the fix commit."],
+    checks: ["The same reproduction now passes and the failing test commit comes before the fix commit.", liveCall],
     skills: ["tdd", "ponytail", "principle-test-behavior-not-implementation"],
-  }, quality, simplify],
+  }, quality, bugHunt, simplify],
   refactor: [{
     id: "pin-behavior", stage: "tdd", title: "Pin current behavior",
     instructions: "Record current behavior before code moves. Prove each pin test can fail by changing the code on purpose.",

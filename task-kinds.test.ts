@@ -23,8 +23,8 @@ describe("task kinds", () => {
   it("orders each kind's template steps and adds PR Watch only for PR delivery", () => {
     const ids = (kind: (typeof kinds)[number], deliveryTarget?: "pr" | "local") =>
       kindTemplate({ kind, deliveryTarget }).map(step => step.id);
-    expect(ids("feature")).toEqual(["build", "quality", "simplify"]);
-    expect(ids("bug-fix")).toEqual(["reproduce", "root-cause", "fix", "quality", "simplify"]);
+    expect(ids("feature")).toEqual(["build", "quality", "bug-hunt", "simplify"]);
+    expect(ids("bug-fix")).toEqual(["reproduce", "root-cause", "fix", "quality", "bug-hunt", "simplify"]);
     expect(ids("refactor")).toEqual(["pin-behavior", "subtract", "reshape", "quality"]);
     expect(ids("perf", "local")).toEqual(["baseline", "fix", "measure", "quality"]);
     expect(ids("perf", "pr")).toEqual(["baseline", "fix", "measure", "quality", "pr"]);
@@ -36,9 +36,18 @@ describe("task kinds", () => {
     for (const kind of kinds)
       for (const step of kindTemplate({ kind, deliveryTarget: "pr" }))
         for (const skill of step.skills) expect(shipped).toContain(skill);
+    for (const kind of kinds) expect(kindTemplate({ kind, deliveryTarget: "pr" }).at(-1)!.skills).toContain(catalogId("pr-proof"));
     expect(kindTemplate({ kind: "bug-fix" })[0]!.skills).toEqual([catalogId("diagnosing-bugs"), catalogId("principle-fix-root-causes")]);
     // The ID a live bb catalog gave the shipped tdd skill of plugin treelanes.
     expect(kindTemplate({ kind: "feature" })[0]!.skills[0]).toBe("skill_be770585e3c00bb7048489911a88678935ab2249dae66ef8e36ce3243591a92c");
+  });
+
+  it.each(["feature", "bug-fix"] as const)("requires live call evidence and the bug-hunt skill for %s", kind => {
+    const steps = kindTemplate({ kind });
+    expect(steps.find(step => step.id === (kind === "feature" ? "build" : "fix"))!.checks).toContain(
+      "Each external API the change calls answered one real request (sandbox, dev, or local stack), and the test fixture comes from that reply; or the PR's Not verified list names it with the post-merge check.",
+    );
+    expect(steps.find(step => step.id === "bug-hunt")!.skills).toEqual([catalogId("bug-hunt")]);
   });
 
   it("gives the setup worker the kind and every template step id, check and skill ID", () => {

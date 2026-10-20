@@ -201,7 +201,8 @@ describe("saved stage evidence", () => {
     await t.harness.behavior.callAgentTool("treelanes_set_task", { ...t.task, deliveryTarget: "pr" }, t.agent);
     await expect(t.submit({ ...await t.receipt(), openFindings: ["The new API leaks another tenant's data"],
       checks: [{ name: "API regression", status: "failed", evidence: "Failure observed",
-        nonTaskFailure: { kind: "base", diagnosis: "Base suite also has failures" } }] })).rejects.toThrow(/required findings/);
+        nonTaskFailure: { kind: "base", diagnosis: "Base suite at abc1234 also has failures" } }] })).rejects.toThrow(/required findings/);
+    expect((await t.context()).blockedAttempt.waitingForUser).toBe(false);
     await t.idle();
     expect(t.stage()).toBe("tdd");
   });
@@ -211,13 +212,130 @@ describe("saved stage evidence", () => {
     await t.harness.behavior.callAgentTool("treelanes_set_task", { ...t.task, deliveryTarget: "pr", requiredChecks: ["API regression", "Full backend suite"] }, t.agent);
     const receipt = await t.receipt();
     receipt.checks.push({ name: "Full backend suite", status: "failed", evidence: "Full suite exits 1; task regression passes", nonTaskFailure: {
-      kind, diagnosis: kind === "base" ? "The same failure reproduces on base revision abc123 with unchanged test inputs." : "The suite cannot reach its required test database; local task tests use verified fixtures.",
+      kind, diagnosis: kind === "base" ? "The same failure reproduces on base revision abc1234 with unchanged test inputs." : "The suite cannot reach its required test database; local task tests use verified fixtures.",
     } } as typeof receipt.checks[number]);
     await t.submit(receipt);
     await t.idle();
     expect(t.stage()).toBe("quality");
     const saved = t.bb.storage.database().prepare("SELECT evidence_json FROM worktree_stage_results WHERE environment_id = 'env' ORDER BY stage_updated_at LIMIT 1").get() as { evidence_json: string };
     expect(JSON.parse(saved.evidence_json).checks[1]).toMatchObject({ status: "failed", nonTaskFailure: { kind } });
+  });
+
+  it.each(["main", "abc123", "a".repeat(41)])("rejects a base failure whose diagnosis names no commit: %s", async revision => {
+    const t = await setup();
+    await t.harness.behavior.callAgentTool("treelanes_set_task", { ...t.task, deliveryTarget: "pr", requiredChecks: ["API regression", "Full backend suite"] }, t.agent);
+    const receipt = await t.receipt();
+    receipt.checks.push({ name: "Full backend suite", status: "failed", evidence: "Full suite exits 1",
+      nonTaskFailure: { kind: "base", diagnosis: `The same failure reproduces on ${revision}.` } } as typeof receipt.checks[number]);
+    await expect(t.submit(receipt)).rejects.toThrow(/base commit/);
+    await t.idle();
+    expect(t.stage()).toBe("tdd");
+  });
+
+  it("accepts a full uppercase base commit", async () => {
+    const t = await setup();
+    await t.harness.behavior.callAgentTool("treelanes_set_task", { ...t.task, deliveryTarget: "pr" }, t.agent);
+    const receipt = { ...await t.receipt(), checks: [
+      { name: "API regression", status: "passed", evidence: "3 tests passed" },
+      { name: "Full backend suite", status: "failed", evidence: "Suite exits 1",
+        nonTaskFailure: { kind: "base", diagnosis: `Same failures at ${"ABCDEF01".repeat(5)}.` } },
+    ] };
+    await expect(t.submit(receipt)).resolves.toContain('"recorded":true');
+  });
+
+  it.each(["tdd", "quality", "simplify"])("waits for the user in %s when no required check passed, even with a repair action", async stage => {
+    const t = await setup();
+    t.bb.storage.database().prepare("UPDATE worktree_cards SET stage = ? WHERE environment_id = 'env'").run(stage);
+    await t.harness.behavior.callAgentTool("treelanes_set_task", { ...t.task, deliveryTarget: "pr" }, t.agent);
+    t.harness.sdk.stub("threads.events.list", async () => [{ id: "finished-turn", threadId: "root", seq: 20,
+      createdAt: Date.now() + 1, type: "turn/completed", data: { status: "completed" } }]);
+    const receipt = { ...await t.receipt(), stage,
+      checks: [{ name: "API regression", status: "failed", evidence: "Suite exits 1",
+        nonTaskFailure: { kind: "environment", diagnosis: "The test database is down." } },
+      { name: "Lint", status: "passed", evidence: "eslint: exit 0" }],
+      nextAction: "Retry API regression" };
+    const result = t.submit(receipt);
+    await expect(result).rejects.toThrow("No required check passed");
+    await expect(result).rejects.toThrow(/Stop and wait for the user\.$/);
+    await expect(result).rejects.not.toThrow(/Diagnose and fix|resubmit|continue.*repair/i);
+    const context = await t.context();
+    expect(context.blockedAttempt.evidence.checks).toEqual(receipt.checks);
+    expect(context.blockedAttempt.waitingForUser).toBe(true);
+    expect(context.blockedAttempt.evidence.nextAction).toBe(receipt.nextAction);
+    expect(t.bb.storage.database().prepare("SELECT * FROM worktree_tdd_repairs").all()).toEqual([]);
+    await expect(t.harness.behavior.callAgentTool("treelanes_recover", { reason: "All required checks failed", nextAction: receipt.nextAction }, t.agent))
+      .rejects.toThrow(/Stop and wait for the user/);
+    await t.idle();
+    expect(t.stage()).toBe(stage);
+    expect(t.sends).toEqual([]);
+    const next = await t.harness.lifecycle.reload(plugin);
+    disposals.push(() => next.harness.lifecycle.dispose());
+    await next.harness.behavior.runSchedule("reconcile-worktrees");
+    expect(t.sends).toEqual([]);
+    expect(t.requests).toEqual([]);
+  });
+
+  it.each(["no action", "pending repair"])("keeps failed step checks blocked through CLI, reconciliation and reload with %s", async mode => {
+    const t = await setup(false);
+    await t.harness.behavior.callAgentTool("treelanes_deliver", { stage: "tdd",
+      task: { ...t.task, requiredChecks: [], deliveryTarget: "pr" } }, t.agent);
+    const steps = ["tdd", "pr"].map(stage => ({ id: stage, title: stage, stage,
+      instructions: "Complete and check", checks: stage === "tdd" ? ["API regression"] : [],
+      execution: { providerId: "codex", model: "small", reasoningLevel: "low", skills: [], reason: "Bounded work" } }));
+    await t.harness.behavior.callAgentTool("treelanes_apply_setup", { setup: { summary: "Fix and PR", steps } },
+      { ...t.agent, threadId: t.threads[1]!.id });
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    const worker = t.threads[2]!;
+    const agent = { ...t.agent, threadId: worker.id };
+    t.harness.sdk.stub("threads.events.list", async () => [{ id: "finished-turn", threadId: worker.id, seq: 20,
+      createdAt: Date.now() + 1, type: "turn/completed", data: { status: "completed" } }]);
+    const receipt = await t.receipt();
+    await t.harness.behavior.callAgentTool("treelanes_complete_stage", receipt, agent);
+    if (mode === "pending repair") {
+      await t.harness.behavior.callAgentTool("treelanes_complete_stage", { ...receipt,
+        checks: [{ name: "API regression", status: "failed", evidence: "Task regression" }], nextAction: "Retry API regression" }, agent);
+    }
+    const failed = { ...receipt, checks: [
+      { name: "API regression", status: "failed", evidence: "Suite exits 1",
+        nonTaskFailure: { kind: "base", diagnosis: "Same failures at abc1234." } },
+      { name: "Lint", status: "passed", evidence: "eslint: exit 0" },
+    ], ...(mode === "pending repair" ? { nextAction: "Retry API regression" } : {}) };
+    const result = await t.harness.behavior.runCli(["complete", JSON.stringify(failed)], agent);
+    expect(result).toMatchObject({ exitCode: 1, stderr: expect.stringMatching(/Stop and wait for the user\.$/) });
+    expect(t.bb.storage.database().prepare("SELECT * FROM worktree_stage_results").all()).toEqual([]);
+    const health = await t.harness.behavior.runCli(["health", "project"]);
+    expect(JSON.parse(String(health.stdout))).toEqual([expect.objectContaining({ status: "checks-blocked", waitingForInput: true })]);
+    await t.idle(worker);
+    expect(t.sends).toEqual([]);
+    const next = await t.harness.lifecycle.reload(plugin);
+    disposals.push(() => next.harness.lifecycle.dispose());
+    await next.harness.behavior.runSchedule("reconcile-worktrees");
+    expect(t.sends).toEqual([]);
+    expect(t.requests).toHaveLength(2);
+    expect(next.bb.storage.database().prepare("SELECT stage FROM worktree_cards").get()).toEqual({ stage: "tdd" });
+    const recovery = { reason: "Base failures remain", nextAction: "Retry API regression" };
+    expect(await next.harness.behavior.runCli(["recover", JSON.stringify(recovery)], agent))
+      .toMatchObject({ exitCode: 1, stderr: expect.stringContaining("Stop and wait for the user") });
+    const passed = await next.harness.behavior.runCli(["complete", JSON.stringify(receipt)], agent);
+    expect(passed.exitCode).toBe(0);
+    await next.harness.behavior.emitThreadEvent("thread.idle", { thread: worker, lastAssistantText: "Fresh checks passed" });
+    expect(next.bb.storage.database().prepare("SELECT stage FROM worktree_cards").get()).toEqual({ stage: "pr" });
+  });
+
+  it.each(["decision", "finding", "optional task failure"])("keeps a %s out of the all-non-task-failures wait path", async problem => {
+    const t = await setup();
+    await t.harness.behavior.callAgentTool("treelanes_set_task", { ...t.task, deliveryTarget: "pr" }, t.agent);
+    const receipt = { ...await t.receipt(), decisionsResolved: problem !== "decision",
+      openFindings: problem === "finding" ? ["The parser accepts an invalid entry"] : [],
+      checks: [
+        { name: "API regression", status: "failed", evidence: "Database unavailable",
+          nonTaskFailure: { kind: "environment", diagnosis: "Test database is down" } },
+        { name: "Lint", status: problem === "optional task failure" ? "failed" : "passed", evidence: "Lint result" },
+      ], nextAction: "Fix the parser and run API regression" };
+    const result = t.submit(receipt);
+    if (problem === "decision") await expect(result).rejects.toThrow(/required decisions/);
+    else await expect(result).resolves.toContain('"action":"repair"');
+    expect((await t.context()).blockedAttempt.waitingForUser).toBe(false);
   });
 
   it.each(["receipt", "user"])("waits in Design and uses the original orchestrator after %s start", async trigger => {
@@ -371,9 +489,10 @@ describe("saved stage evidence", () => {
     const [build, quality] = kindTemplate({ kind: "feature" }).map(({ skills, ...step }) =>
       ({ ...step, execution: { providerId: "codex", model: "small", reasoningLevel: "low", skills, reason: "Fits." } }));
     const save = (setup: object) => t.harness.behavior.callAgentTool("treelanes_set_task", { ...t.task, kind: "feature", setup }, t.agent);
-    await expect(save({ summary: "Build and review", steps: [build, quality] })).rejects.toThrow(/simplify/);
-    await save({ summary: "Build and review", steps: [build, quality], skipped: [{ stepId: "simplify", reason: "One-line change." }] });
-    expect((await t.context()).task.setup.skipped).toEqual([{ stepId: "simplify", reason: "One-line change." }]);
+    const skipped = [{ stepId: "bug-hunt", reason: "No external call or stored state." }, { stepId: "simplify", reason: "One-line change." }];
+    await expect(save({ summary: "Build and review", steps: [build, quality], skipped: skipped.slice(0, 1) })).rejects.toThrow(/simplify/);
+    await save({ summary: "Build and review", steps: [build, quality], skipped });
+    expect((await t.context()).task.setup.skipped).toEqual(skipped);
   });
 
   it("keeps a stage worker visible when its task parent is hidden", async () => {
