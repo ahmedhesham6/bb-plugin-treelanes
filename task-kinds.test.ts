@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SetupPlan } from "./setup-plan";
 import { buildSetupPrompt, validateSetupProposal } from "./setup-request";
 import { taskContextSchema } from "./stage-evidence";
-import { kindTemplate } from "./task-kinds";
+import { kindTemplate, validateKindSteps } from "./task-kinds";
 import { shippedSkills } from "./test-workspace";
 
 const kinds = ["feature", "bug-fix", "refactor", "perf"] as const;
@@ -114,5 +114,34 @@ describe("kind template rules on a setup proposal", () => {
     const previous = { ...bugFix, setup: fromTemplate() };
     expect(() => validateSetupProposal(previous, fromTemplate(), "tdd", "root-cause", true)).not.toThrow();
     expect(() => validateSetupProposal(previous, edit(plan => { plan.steps.pop(); }), "tdd", "root-cause", true)).toThrow(/simplify/);
+  });
+
+  describe("on a plan saved under an older template", () => {
+    const feature = taskContextSchema.parse({ ...task("feature"), deliveryTarget: "pr" });
+    // Before bug-hunt, the live call check and pr-proof: build → quality → simplify → pr.
+    const old = (): SetupPlan => ({ summary: "Feature.", steps: kindTemplate(feature).filter(step => step.id !== "bug-hunt")
+      .map(({ skills, ...step }) => ({ ...step, checks: step.checks.slice(0, 1),
+        execution: { providerId: "codex", model: "m", reasoningLevel: "low", skills: skills.filter(skill => skill !== catalogId("pr-proof")), reason: "Fits." } })) });
+
+    it("keeps completed steps and the skills of a started step as they are", () => {
+      expect(() => validateKindSteps(feature, old(), 3, true)).not.toThrow();
+      expect(() => validateKindSteps(feature, old(), 0, true)).toThrow(/"build" must keep check/);
+    });
+
+    it("binds the template to steps that have not started", () => {
+      expect(() => validateKindSteps(feature, old(), 2)).toThrow(/"pr" must keep required skill/);
+      const plan = old();
+      plan.steps[3]!.execution.skills.push(catalogId("pr-proof"));
+      expect(() => validateKindSteps(feature, plan, 2)).not.toThrow();
+      expect(() => validateKindSteps(feature, plan, 1, true)).toThrow(/bug-hunt/);
+      expect(() => validateKindSteps(feature, plan)).toThrow(/"build" must keep check/);
+    });
+
+    it("lets recovery add the new required skill to the active step", () => {
+      const plan = old();
+      expect(() => validateSetupProposal({ ...feature, setup: old() }, plan, "pr", "pr", true)).toThrow(/"pr" must keep required skill/);
+      plan.steps[3]!.execution.skills.push(catalogId("pr-proof"));
+      expect(() => validateSetupProposal({ ...feature, setup: old() }, plan, "pr", "pr", true)).not.toThrow();
+    });
   });
 });

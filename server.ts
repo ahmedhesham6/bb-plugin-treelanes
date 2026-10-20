@@ -929,8 +929,9 @@ export default async function plugin(bb: BbPluginApi) {
     const row = db.prepare("SELECT * FROM worktree_blocked_attempts WHERE environment_id = ?").get(environmentId) as {
       stage_updated_at: number; task_revision: number; thread_id: string; evidence_json: string; reason: string; recorded_at: number;
     } | undefined;
+    if (!row) return null;
     const saved = taskFor(environmentId);
-    if (!row || row.stage_updated_at !== state?.updated_at || row.task_revision !== saved.revision ||
+    if (row.stage_updated_at !== state?.updated_at || row.task_revision !== saved.revision ||
         row.thread_id !== state.owner_thread_id) return null;
     const evidence = completionEvidenceSchema.parse(JSON.parse(row.evidence_json));
     const waitingForUser = state.stage !== "design" && prDelivery(saved.task) && onlyNonTaskFailures(completionChecks(state, saved.task), evidence);
@@ -1003,9 +1004,9 @@ export default async function plugin(bb: BbPluginApi) {
     task.setup = preserveCompletedSteps(current.task?.setup, task.setup, state.active_step_id);
     const activeFixed = Boolean(prepared?.execution_json || (launch && ["started", "starting"].includes(launch.status)));
     if (task.setup) {
-      validateKindSteps(task, task.setup);
-      // Settings bind steps that have not started; started and completed steps keep their choice.
       const active = task.setup.steps.findIndex(step => step.id === state.active_step_id);
+      validateKindSteps(task, task.setup, active, activeFixed);
+      // Settings bind steps that have not started; started and completed steps keep their choice.
       requireStepChoices(task.kind, task.setup.steps.slice(active < 0 ? 0 : active + Number(activeFixed)), taskMap.read());
     }
     validateSetupRevision(current.task?.setup, task.setup, state.active_step_id, state.stage, activeFixed);
@@ -1596,6 +1597,7 @@ export default async function plugin(bb: BbPluginApi) {
           saved?.updated_at ?? 0,
         ) as StageThreadLaunchRow | undefined;
         const blocker = blockedAttempt(environmentId);
+        const repair = blocker && !blocker.waitingForUser ? tddRepair.describe(environmentId, blocker.evidence, rows.some(hasLiveWork), paused(environmentId), rows.some(thread => thread.hasPendingInteraction)) : null;
         const savedTask = taskFor(environmentId);
         const completeLocally = !["pr", "done"].includes(stage) && savedTask.task?.setup?.steps.at(-1)?.stage !== "pr" &&
           !rows.some(thread => hasLiveWork(thread) || thread.hasPendingInteraction) &&
@@ -1611,7 +1613,7 @@ export default async function plugin(bb: BbPluginApi) {
             "Unnamed worktree",
           branchName: lead.environmentBranchName,
           stage,
-          note: blocker ? tddRepair.describe(environmentId, blocker.evidence, rows.some(hasLiveWork), paused(environmentId), rows.some(thread => thread.hasPendingInteraction))?.message ?? `Blocked: ${blocker.reason}`
+          note: blocker ? repair?.message ?? `Blocked: ${blocker.reason}`
             : completeLocally ? "Complete locally. No PR step is planned." : saved?.note ?? null,
           status: worktreeStatus(rows),
           hasPendingInteraction: rows.some(

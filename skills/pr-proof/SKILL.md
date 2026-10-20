@@ -9,7 +9,7 @@ description: Proof and readiness rules for a pull request of code that will merg
 
 A check passes when a run shows it: a command you executed and its output, quoted in the receipt or the PR. Green tests against fakes show only that the code matches the fakes.
 
-- For each external API the change calls, make one real call before the PR is ready, in a sandbox, the dev environment or a local stack in read-only mode. Save the real reply and build the test fixture from it.
+- For each external API the change calls, make one real call before the PR is ready, in a sandbox, the dev environment or a local stack in read-only mode. Save the real reply, remove secrets and personal data from it, and build the test fixture from it.
 - Treat a claim from a person or a document as a hypothesis until a real call confirms it.
 - When no safe real call exists, add the call to **Not verified** with the check to run on dev after merge.
 

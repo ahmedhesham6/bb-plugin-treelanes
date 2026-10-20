@@ -55,7 +55,7 @@ export function validateSetupProposal(
   const parsed = setupPlanSchema.parse(proposed);
   normalizeLegacyDeliveryStages({ ...previous, setup: parsed });
   requirePrWatch({ ...previous, setup: parsed });
-  validateKindSteps(previous, parsed);
+  validateKindSteps(previous, parsed, recovery ? parsed.steps.findIndex(step => step.id === activeStepId) : -1);
   for (const step of parsed.steps) assertCheckBudget(step, previous);
 
   if (!recovery) {

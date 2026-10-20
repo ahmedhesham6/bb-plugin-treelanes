@@ -305,6 +305,8 @@ describe("saved stage evidence", () => {
     expect(t.bb.storage.database().prepare("SELECT * FROM worktree_stage_results").all()).toEqual([]);
     const health = await t.harness.behavior.runCli(["health", "project"]);
     expect(JSON.parse(String(health.stdout))).toEqual([expect.objectContaining({ status: "checks-blocked", waitingForInput: true })]);
+    const board = await t.harness.behavior.callRpc("getBoard", { projectId: "project" }) as { cards: Array<{ note: string }> };
+    expect(board.cards[0]?.note).toBe("Blocked: No required check passed. Every required check failed for base or environment reasons.");
     await t.idle(worker);
     expect(t.sends).toEqual([]);
     const next = await t.harness.lifecycle.reload(plugin);
@@ -493,6 +495,23 @@ describe("saved stage evidence", () => {
     await expect(save({ summary: "Build and review", steps: [build, quality], skipped: skipped.slice(0, 1) })).rejects.toThrow(/simplify/);
     await save({ summary: "Build and review", steps: [build, quality], skipped });
     expect((await t.context()).task.setup.skipped).toEqual(skipped);
+  });
+
+  it("revises a task saved under an older kind template", async () => {
+    const t = await setup();
+    const prProof = kindTemplate({ kind: "feature", deliveryTarget: "pr" }).at(-1)!.skills.at(-1)!;
+    // build → quality → simplify → pr, before bug-hunt, the live call check and pr-proof.
+    const steps = kindTemplate({ kind: "feature", deliveryTarget: "pr" }).filter(step => step.id !== "bug-hunt").map(({ skills, ...step }) =>
+      ({ ...step, checks: step.checks.slice(0, 1), execution: { providerId: "codex", model: "small", reasoningLevel: "low", skills: skills.filter(skill => skill !== prProof), reason: "Fits." } }));
+    const task = { ...t.task, kind: "feature", deliveryTarget: "pr", setup: { summary: "Feature", steps } };
+    const db = t.bb.storage.database();
+    db.prepare("UPDATE worktree_task_contexts SET context_json = ? WHERE environment_id = 'env'").run(JSON.stringify(task));
+    db.prepare("UPDATE worktree_cards SET stage = 'simplify', active_step_id = 'simplify' WHERE environment_id = 'env'").run();
+    const save = (outcome: string) => t.harness.behavior.callAgentTool("treelanes_set_task", { ...task, outcome }, t.agent);
+    await expect(save("Fix it.")).rejects.toThrow('Template step "pr" must keep required skill');
+    steps.at(-1)!.execution.skills.push(prProof);
+    await save("Fix it.");
+    expect((await t.context()).task).toMatchObject({ outcome: "Fix it.", setup: { steps: steps.map(step => expect.objectContaining({ id: step.id })) } });
   });
 
   it("keeps a stage worker visible when its task parent is hidden", async () => {
