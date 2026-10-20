@@ -40,6 +40,16 @@ regression in `stageChecks.tdd` and a broader suite in `stageChecks.quality`.
 `context` returns the combined check names and `nextStage`, and the next worker
 reads them from fresh context.
 
+For PR delivery, a required check can fail with a diagnosed base or environment
+failure. A base diagnosis must name the base commit (7 to 40 hex characters).
+When the stage has required checks, at least one must pass. When every required
+check fails for base or environment reasons, the receipt is not recorded and the
+stage waits for the user.
+
+Feature and bug-fix templates add a `bug-hunt` Quality step after Quality and
+before Simplify, and require a live call check on the build or fix step. The PR
+Watch step requires the `pr-proof` skill.
+
 ## Plans
 
 Each task has a `deliveryTarget`. New automatic tasks use `"pr"`: the default

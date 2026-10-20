@@ -18,6 +18,12 @@ const quality: TemplateStep = {
   checks: ["Strict review reports no findings."],
   skills: ["thermo-nuclear-code-quality-review", "principle-minimize-reader-load"],
 };
+const bugHunt: TemplateStep = {
+  id: "bug-hunt", stage: "quality", title: "Hunt failure paths in the diff",
+  instructions: "Follow the Diff branch of /bug-hunt on the task diff and fix every finding within scope.",
+  checks: ["Each external call and stored state in the diff has a test or an accepted-risk line for every failure question."],
+  skills: ["bug-hunt"],
+};
 const simplify: TemplateStep = {
   id: "simplify", stage: "simplify", title: "Simplify the task changes",
   instructions: "Reduce needless code in the task diff without changing behavior.",
@@ -28,17 +34,18 @@ const pr: TemplateStep = {
   id: "pr", stage: "pr", title: "PR Watch",
   instructions: "Open or reuse the pull request and watch it until it is ready to merge.",
   checks: [],
-  skills: ["babysit-pr", "show-me"],
+  skills: ["babysit-pr", "show-me", "pr-proof"],
 };
 const diagnose = ["diagnosing-bugs", "principle-fix-root-causes"];
+const liveCall = "Each external API the change calls answered one real request (sandbox, dev, or local stack), and the test fixture comes from that reply; or the PR's Not verified list names it with the post-merge check.";
 
 const templates: Record<TaskKind, TemplateStep[]> = {
   feature: [{
     id: "build", stage: "tdd", title: "Build the change",
     instructions: "Build the change test-first through the accepted test interfaces, then run it on the surface it touches.",
-    checks: ["The change works on the surface it touches, shown by a run, not unit tests alone."],
+    checks: ["The change works on the surface it touches, shown by a run, not unit tests alone.", liveCall],
     skills: ["tdd", "ponytail", "principle-model-the-domain", "principle-test-behavior-not-implementation"],
-  }, quality, simplify],
+  }, quality, bugHunt, simplify],
   "bug-fix": [{
     id: "reproduce", stage: "tdd", title: "Reproduce the defect",
     instructions: "Reproduce the reported defect and capture its failing output before any fix.",
@@ -52,9 +59,9 @@ const templates: Record<TaskKind, TemplateStep[]> = {
   }, {
     id: "fix", stage: "tdd", title: "Fix the defect",
     instructions: "Commit a failing test for the reproduction, then fix the root cause in a later commit.",
-    checks: ["The same reproduction now passes and the failing test commit comes before the fix commit."],
+    checks: ["The same reproduction now passes and the failing test commit comes before the fix commit.", liveCall],
     skills: ["tdd", "ponytail", "principle-test-behavior-not-implementation"],
-  }, quality, simplify],
+  }, quality, bugHunt, simplify],
   refactor: [{
     id: "pin-behavior", stage: "tdd", title: "Pin current behavior",
     instructions: "Record current behavior before code moves. Prove each pin test can fail by changing the code on purpose.",
@@ -103,26 +110,30 @@ export function kindTemplate(task: KindTask): TemplateStep[] {
 /**
  * Reject a Task Setup that leaves out a template step without a skip reason,
  * or changes a template step's stage, checks, required skills or order.
- * Extra steps, checks and skills are allowed.
+ * Extra steps, checks and skills are allowed. A revision cannot add a step at
+ * or before the active step, change a completed step, or change a started
+ * step's skills, so a plan saved under an older template keeps those as they are.
  */
-export function validateKindSteps(task: KindTask, plan: SetupPlan): void {
+export function validateKindSteps(task: KindTask, plan: SetupPlan, active = -1, started = false): void {
   const template = kindTemplate(task);
   const skipped = new Set(plan.skipped?.map(skip => skip.stepId));
   for (const stepId of skipped) {
     if (!template.some(step => step.id === stepId)) throw new Error(`Skipped step ${JSON.stringify(stepId)} is not a ${task.kind ?? "task kind"} template step.`);
   }
+  const indexes = template.map(expected => plan.steps.findIndex(step => step.id === expected.id));
+  const placed = indexes.reduce((last, index, t) => index >= 0 && index <= active ? t : last, -1);
   let last = -1;
-  for (const expected of template) {
-    const index = plan.steps.findIndex(step => step.id === expected.id);
+  for (const [t, expected] of template.entries()) {
+    const index = indexes[t]!;
     if (index < 0) {
-      if (skipped.has(expected.id)) continue;
+      if (skipped.has(expected.id) || t < placed) continue;
       throw new Error(`Keep template step ${JSON.stringify(expected.id)} or add it to skipped with a reason.`);
     }
     const step = plan.steps[index]!;
     if (step.stage !== expected.stage) throw new Error(`Template step ${JSON.stringify(step.id)} must keep stage ${expected.stage}.`);
-    const check = expected.checks.find(check => !step.checks.includes(check));
+    const check = index >= active && expected.checks.find(check => !step.checks.includes(check));
     if (check) throw new Error(`Template step ${JSON.stringify(step.id)} must keep check ${JSON.stringify(check)}.`);
-    const skill = expected.skills.find(skill => !step.execution.skills.includes(skill));
+    const skill = index >= active + Number(started) && expected.skills.find(skill => !step.execution.skills.includes(skill));
     if (skill) throw new Error(`Template step ${JSON.stringify(step.id)} must keep required skill ${skill}.`);
     if (index < last) throw new Error(`Keep template steps in template order; ${JSON.stringify(step.id)} is out of order.`);
     last = index;

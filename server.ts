@@ -4,7 +4,7 @@ import {
   type NewThreadRequest,
 } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { captureWorkspace, completionEvidenceSchema, taskContextSchema } from "./stage-evidence";
+import { captureWorkspace, completionEvidenceSchema, onlyNonTaskFailures, taskContextSchema, type TaskContext } from "./stage-evidence";
 import { nextDeliveryStage, requiredStageChecks } from "./delivery-plan";
 import { activeSetupStep, nextSetupStep, normalizeLegacyDeliveryStages, preserveCompletedSteps, requirePrWatch, validateSetupRevision } from "./setup-plan";
 import { resolveStepExecution } from "./step-execution";
@@ -30,7 +30,7 @@ import {
 } from "./workflow";
 
 const stageSchema = z.enum(STAGE_IDS);
-const PLUGIN_SKILLS = ["babysit-pr", "benchmark-checklist", "code-review", "codebase-design", "delivery", "diagnosing-bugs", "grilling", "ponytail",
+const PLUGIN_SKILLS = ["babysit-pr", "benchmark-checklist", "bug-hunt", "code-review", "codebase-design", "delivery", "diagnosing-bugs", "grilling", "ponytail", "pr-proof",
   "principle-fix-root-causes", "principle-migrate-callers-then-delete-legacy-apis", "principle-minimize-reader-load", "principle-model-the-domain",
   "principle-sequence-verifiable-units", "principle-subtract-before-you-add", "principle-test-behavior-not-implementation", "show-me", "simplify", "tdd",
   "thermo-nuclear-code-quality-review"] as const;
@@ -915,14 +915,27 @@ export default async function plugin(bb: BbPluginApi) {
     return result.pullRequest;
   }
 
+  function prDelivery(task: TaskContext | null | undefined) {
+    return task?.deliveryTarget === "pr" || task?.setup?.steps.at(-1)?.stage === "pr";
+  }
+
+  function completionChecks(state: WorktreeStateRow, task: TaskContext | null) {
+    return state.stage === "design" ? task?.stageChecks?.design ?? []
+      : [...new Set([...requiredStageChecks(state.stage, task), ...(activeSetupStep(task?.setup, state.active_step_id)?.checks ?? [])])];
+  }
+
   function blockedAttempt(environmentId: string) {
     const state = readWorktreeState.get(environmentId) as WorktreeStateRow | undefined;
     const row = db.prepare("SELECT * FROM worktree_blocked_attempts WHERE environment_id = ?").get(environmentId) as {
       stage_updated_at: number; task_revision: number; thread_id: string; evidence_json: string; reason: string; recorded_at: number;
     } | undefined;
-    if (!row || row.stage_updated_at !== state?.updated_at || row.task_revision !== taskFor(environmentId).revision ||
+    if (!row) return null;
+    const saved = taskFor(environmentId);
+    if (row.stage_updated_at !== state?.updated_at || row.task_revision !== saved.revision ||
         row.thread_id !== state.owner_thread_id) return null;
-    return { reason: row.reason, recordedAt: row.recorded_at, evidence: completionEvidenceSchema.parse(JSON.parse(row.evidence_json)) };
+    const evidence = completionEvidenceSchema.parse(JSON.parse(row.evidence_json));
+    const waitingForUser = state.stage !== "design" && prDelivery(saved.task) && onlyNonTaskFailures(completionChecks(state, saved.task), evidence);
+    return { reason: row.reason, recordedAt: row.recorded_at, evidence, waitingForUser };
   }
 
   async function readContext(threadId: string) {
@@ -964,7 +977,7 @@ export default async function plugin(bb: BbPluginApi) {
       blockedAttempt: blockedAttempt(environmentId),
       activeStep, nextStep, setupComplete: Boolean(db.prepare("SELECT 1 FROM worktree_setup_outcomes WHERE environment_id = ? AND task_revision = ?").get(environmentId, saved.revision)), completedStepIds: saved.task?.setup?.steps.slice(0, Math.max(0, saved.task.setup.steps.findIndex(step => step.id === state.active_step_id))).map(step => step.id) ?? [],
       execution: executionRow?.execution_json ? JSON.parse(executionRow.execution_json) : null,
-      requiredChecks: state.stage === "design" ? saved.task?.stageChecks?.design ?? [] : [...new Set([...requiredStageChecks(state.stage, saved.task), ...(activeStep?.checks ?? [])])],
+      requiredChecks: completionChecks(state, saved.task),
       nextStage: saved.task?.setup ? nextStep?.stage ?? null : nextDeliveryStage(state.stage, saved.task),
       paused: paused(environmentId),
       ...(snapshot ? { workspaceDigest: await captureWorkspace(bb.sdk, environmentId) } : {}) };
@@ -991,9 +1004,9 @@ export default async function plugin(bb: BbPluginApi) {
     task.setup = preserveCompletedSteps(current.task?.setup, task.setup, state.active_step_id);
     const activeFixed = Boolean(prepared?.execution_json || (launch && ["started", "starting"].includes(launch.status)));
     if (task.setup) {
-      validateKindSteps(task, task.setup);
-      // Settings bind steps that have not started; started and completed steps keep their choice.
       const active = task.setup.steps.findIndex(step => step.id === state.active_step_id);
+      validateKindSteps(task, task.setup, active, activeFixed);
+      // Settings bind steps that have not started; started and completed steps keep their choice.
       requireStepChoices(task.kind, task.setup.steps.slice(active < 0 ? 0 : active + Number(activeFixed)), taskMap.read());
     }
     validateSetupRevision(current.task?.setup, task.setup, state.active_step_id, state.stage, activeFixed);
@@ -1139,6 +1152,7 @@ export default async function plugin(bb: BbPluginApi) {
     }
     const blocker = blockedAttempt(context.environmentId);
     if (blocker) {
+      if (blocker.waitingForUser) throw new Error("No required check passed. Stop and wait for the user.");
       if (!blocker.evidence.decisionsResolved) throw new Error("Resolve the recorded human decision before recovery.");
       if (!nextAction) throw new Error("Recorded checks are blocked. Supply nextAction with a concrete in-scope change before recovery. Unchanged base or external failures do not justify another TDD worker.");
     }
@@ -1180,16 +1194,19 @@ export default async function plugin(bb: BbPluginApi) {
     const checks = new Map(evidence.checks.map(check => [check.name, check]));
     if (checks.size !== evidence.checks.length) throw new Error("Check names must be unique.");
     if (evidence.checks.some(check => !check.evidence.trim())) throw new Error("Each check needs evidence or a reason.");
-    const prDelivery = context.task?.deliveryTarget === "pr" || context.task?.setup?.steps.at(-1)?.stage === "pr";
+    if (evidence.checks.some(check => check.nonTaskFailure?.kind === "base" && !/\b[0-9a-f]{7,40}\b/i.test(check.nonTaskFailure.diagnosis)))
+      throw new Error("A base failure diagnosis must name the base commit (7-40 hex characters) where the same failure reproduces.");
     const nonTaskFailure = (check: typeof evidence.checks[number]) =>
-      prDelivery && evidence.stage !== "design" && Boolean(check.nonTaskFailure) && check.status !== "passed";
+      prDelivery(context.task) && evidence.stage !== "design" && Boolean(check.nonTaskFailure) && check.status !== "passed";
     const missingChecks = context.requiredChecks.filter(name => {
       const check = checks.get(name);
       return !check || (check.status !== "passed" && !nonTaskFailure(check));
     });
+    const waitingForUser = prDelivery(context.task) && evidence.stage !== "design" && onlyNonTaskFailures(context.requiredChecks, evidence);
     const problem = !evidence.decisionsResolved ? "Resolve the required decisions before completion."
       : evidence.openFindings.length ? `Resolve the required findings before completion: ${evidence.openFindings.join("; ")}`
       : missingChecks.length ? `Required check has not passed: ${missingChecks.join("; ")}`
+      : waitingForUser ? "No required check passed. Every required check failed for base or environment reasons."
       : evidence.checks.some(check => !["passed", "skipped"].includes(check.status) && !nonTaskFailure(check)) ||
         (evidence.stage !== "design" && !evidence.checks.some(check => check.status === "passed"))
         ? "Implementation needs passing check evidence. Optional skipped checks need a reason." : null;
@@ -1200,7 +1217,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (evidence.nextAction && !problem) {
       throw new Error("Passing evidence does not need nextAction. Remove the repair action before completing the stage.");
     }
-    const repairRequested = Boolean(evidence.nextAction && ["tdd", "quality", "simplify"].includes(evidence.stage) && evidence.decisionsResolved);
+    const repairRequested = Boolean(!waitingForUser && evidence.nextAction && ["tdd", "quality", "simplify"].includes(evidence.stage) && evidence.decisionsResolved);
     if (problem) {
       db.transaction(() => {
         db.prepare(`INSERT INTO worktree_blocked_attempts VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1216,7 +1233,7 @@ export default async function plugin(bb: BbPluginApi) {
       if (repairRequested) return { recorded: false, action: "repair", stage: context.stage,
         repairStatus: tddRepair.read(context.environmentId, evidence)!.status,
         instruction: "Failure evidence saved. Continue the concrete repair in this thread. A pending repair continues once after a normal yield. An already sent, cancelled, or uncertain repair is not sent again. Keep the failure evidence; submit fresh passing checks before any completion marker." };
-      throw new Error(`${problem.slice(0, 4096)} Blocker saved. Do not repeat unchanged checks or emit a completion marker. ${["tdd", "quality", "simplify"].includes(context.stage) && evidence.decisionsResolved
+      throw new Error(`${problem.slice(0, 4096)} Blocker saved. Do not repeat unchanged checks or emit a completion marker. ${waitingForUser ? "Stop and wait for the user." : ["tdd", "quality", "simplify"].includes(context.stage) && evidence.decisionsResolved
         ? "Diagnose and fix this in the same thread. If you yield with a concrete in-scope repair left, resubmit the failed evidence with nextAction to continue that repair automatically. External dependencies with no local repair remain visible."
         : "Resolve it in scope, or stop with the evidence. Recovery requires a concrete nextAction."}`);
     }
@@ -1329,6 +1346,7 @@ export default async function plugin(bb: BbPluginApi) {
           if (queued || (await bb.sdk.environments.get({ environmentId: card.environmentId })).status !== "ready") continue;
           const blocker = blockedAttempt(card.environmentId);
           if (blocker) {
+            if (blocker.waitingForUser) continue;
             if (config.autoAdvanceImplementation && ["tdd", "quality", "simplify"].includes(state.stage) && blocker.evidence.nextAction && blocker.evidence.decisionsResolved) {
               await tddRepair.continueRepair(card.environmentId, blocker.evidence, () => {
                 const current = blockedAttempt(card.environmentId);
@@ -1339,8 +1357,7 @@ export default async function plugin(bb: BbPluginApi) {
             }
             const saved = taskFor(card.environmentId);
             const orchestratorId = setupAutomation.orchestrator(card.environmentId);
-            if (config.autoAdvanceImplementation && orchestratorId && state.owner_thread_id && blocker.evidence.decisionsResolved && !blocker.evidence.nextAction &&
-                (saved.task?.deliveryTarget === "pr" || saved.task?.setup?.steps.at(-1)?.stage === "pr")) {
+            if (config.autoAdvanceImplementation && orchestratorId && state.owner_thread_id && blocker.evidence.decisionsResolved && !blocker.evidence.nextAction && prDelivery(saved.task)) {
               await stageContinuation.help(orchestratorId, state.owner_thread_id, card.environmentId,
                 `${card.environmentId}:${state.updated_at}:${saved.revision}`, blocker.reason, () => {
                   const latest = blockedAttempt(card.environmentId);
@@ -1377,8 +1394,7 @@ export default async function plugin(bb: BbPluginApi) {
           if (current.updated_at !== state.updated_at) continue;
           const saved = taskFor(card.environmentId);
           if (config.autoAdvanceImplementation && state.owner_thread_id && ["tdd", "quality", "simplify"].includes(state.stage) &&
-              (saved.task?.deliveryTarget === "pr" || saved.task?.setup?.steps.at(-1)?.stage === "pr") &&
-              !readResult.get(card.environmentId, state.updated_at)) {
+              prDelivery(saved.task) && !readResult.get(card.environmentId, state.updated_at)) {
             await stageContinuation.resume(state.owner_thread_id, card.environmentId, state.stage,
               `${card.environmentId}:${state.updated_at}:${saved.revision}`, () => {
                 const latest = readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined;
@@ -1445,10 +1461,10 @@ export default async function plugin(bb: BbPluginApi) {
     return [...await taskMapHealth(), ...(await Promise.all(board.cards.map(async card => {
       const launch = readStageThreadLaunch.get(card.environmentId, card.stage, card.stageUpdatedAt) as StageThreadLaunchRow | undefined;
       const blocker = blockedAttempt(card.environmentId);
-      const repair = blocker ? tddRepair.describe(card.environmentId, blocker.evidence, card.status === "active", paused(card.environmentId), card.hasPendingInteraction) : null;
+      const repair = blocker && !blocker.waitingForUser ? tddRepair.describe(card.environmentId, blocker.evidence, card.status === "active", paused(card.environmentId), card.hasPendingInteraction) : null;
       if (blocker) return [{ environmentId: card.environmentId, projectId: card.projectId, stage: card.stage,
         stageUpdatedAt: card.stageUpdatedAt, status: repair?.status ?? "checks-blocked", attempts: launch?.attempt_count ?? 0,
-        error: repair?.message ?? blocker.reason, waitingForInput: !blocker.evidence.decisionsResolved || card.hasPendingInteraction,
+        error: repair?.message ?? blocker.reason, waitingForInput: blocker.waitingForUser || !blocker.evidence.decisionsResolved || card.hasPendingInteraction,
         hasLiveWork: card.status === "active", paused: paused(card.environmentId) }];
       const state = readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined;
       const job = setupAutomation.latest(card.environmentId);
@@ -1581,6 +1597,7 @@ export default async function plugin(bb: BbPluginApi) {
           saved?.updated_at ?? 0,
         ) as StageThreadLaunchRow | undefined;
         const blocker = blockedAttempt(environmentId);
+        const repair = blocker && !blocker.waitingForUser ? tddRepair.describe(environmentId, blocker.evidence, rows.some(hasLiveWork), paused(environmentId), rows.some(thread => thread.hasPendingInteraction)) : null;
         const savedTask = taskFor(environmentId);
         const completeLocally = !["pr", "done"].includes(stage) && savedTask.task?.setup?.steps.at(-1)?.stage !== "pr" &&
           !rows.some(thread => hasLiveWork(thread) || thread.hasPendingInteraction) &&
@@ -1596,7 +1613,7 @@ export default async function plugin(bb: BbPluginApi) {
             "Unnamed worktree",
           branchName: lead.environmentBranchName,
           stage,
-          note: blocker ? tddRepair.describe(environmentId, blocker.evidence, rows.some(hasLiveWork), paused(environmentId), rows.some(thread => thread.hasPendingInteraction))?.message ?? `Blocked: ${blocker.reason}`
+          note: blocker ? repair?.message ?? `Blocked: ${blocker.reason}`
             : completeLocally ? "Complete locally. No PR step is planned." : saved?.note ?? null,
           status: worktreeStatus(rows),
           hasPendingInteraction: rows.some(

@@ -32,7 +32,7 @@ const completionCheckSchema = z
     evidence: z.string().max(MAX_TEXT_LENGTH),
     nonTaskFailure: z.object({
       kind: z.enum(["base", "environment"]),
-      diagnosis: boundedText.describe("Evidence that this is not a task defect: the compared base revision and failures, or the unavailable external dependency and local diagnosis. Never use for unknown or branch-caused failures."),
+      diagnosis: boundedText.describe("Evidence that this is not a task defect: the base commit hash where the same failure reproduces, or the unavailable external dependency and local diagnosis. Never use for unknown or branch-caused failures."),
     }).strict().optional(),
   })
   .strict();
@@ -79,6 +79,13 @@ export const completionEvidenceSchema = z
 
 export type TaskContext = z.infer<typeof taskContextSchema>;
 export type CompletionEvidence = z.infer<typeof completionEvidenceSchema>;
+
+export function onlyNonTaskFailures(requiredChecks: string[], evidence: CompletionEvidence): boolean {
+  if (!evidence.decisionsResolved || evidence.openFindings.length || evidence.checks.some(check =>
+    !["passed", "skipped"].includes(check.status) && !check.nonTaskFailure)) return false;
+  return requiredChecks.length > 0 && requiredChecks.every(name =>
+    evidence.checks.some(check => check.name === name && check.nonTaskFailure && check.status !== "passed"));
+}
 
 export const WORKSPACE_CAPTURE_LIMITS = {
   maxChangedFiles: MAX_CHANGED_FILES,

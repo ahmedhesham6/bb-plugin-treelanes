@@ -48,6 +48,8 @@ Each copied skill keeps the MIT license notice of its upstream:
 | delivery | plugin | none |
 | ponytail | plugin | none |
 | simplify | plugin | none |
+| bug-hunt | plugin | none |
+| pr-proof | plugin | none |
 | principle-test-behavior-not-implementation | pstack:skills/principle-test-behavior-not-implementation | 1f0f9c3bac03c4297f6fc8f7644fa412eda57085 |
 | principle-fix-root-causes | pstack:skills/principle-fix-root-causes | 1f0f9c3bac03c4297f6fc8f7644fa412eda57085 |
 | principle-minimize-reader-load | pstack:skills/principle-minimize-reader-load | 1f0f9c3bac03c4297f6fc8f7644fa412eda57085 |
