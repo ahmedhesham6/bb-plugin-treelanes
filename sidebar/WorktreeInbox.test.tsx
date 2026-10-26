@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import { toast } from "sonner";
 import { fixture } from "./test-fixtures";
 const app = await loadPluginApp(() => import("../app"));
 const slot = app.threadLists[0]!;
@@ -63,10 +64,14 @@ it("settles all threads from the main menu and only one from a child menu", asyn
     ["b", "Settle all threads", { threadId: "b", includeWorktree: true }],
     ["b-child", "Settle thread", { threadId: "b-child" }],
   ] as const) {
-    fireEvent.pointerDown(await screen.findByRole("button", { name: `Actions for ${id}` }),
-      { button: 0, ctrlKey: false });
+    fireEvent.pointerDown(
+      await screen.findByRole("button", { name: `Actions for ${id}` }),
+      { button: 0, ctrlKey: false },
+    );
     fireEvent.click(await screen.findByRole("menuitem", { name: label }));
-    await waitFor(() => expect(view.rpcCalls).toContainEqual({ method: "settle", input }));
+    await waitFor(() =>
+      expect(view.rpcCalls).toContainEqual({ method: "settle", input }),
+    );
   }
 });
 it("opens only the selected worktree and follows external child navigation", async () => {
@@ -123,7 +128,9 @@ it("offers a root but not a child as main thread, without changing thread parent
     );
   await open("b-child");
   await screen.findByRole("menuitem", { name: "Settle thread" });
-  expect(screen.queryByRole("menuitem", { name: "Use as main thread" })).toBeNull();
+  expect(
+    screen.queryByRole("menuitem", { name: "Use as main thread" }),
+  ).toBeNull();
   fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   await open("b-root");
   fireEvent.click(
@@ -132,15 +139,21 @@ it("offers a root but not a child as main thread, without changing thread parent
   await waitFor(() =>
     expect(view.rpcCalls).toContainEqual({
       method: "saveMain",
-      input: expect.objectContaining({ environmentId: "two", threadId: "b-root" }),
+      input: expect.objectContaining({
+        environmentId: "two",
+        threadId: "b-root",
+      }),
     }),
   );
   expect(view.sidebarActionCalls).toHaveLength(0);
 });
 it("repairs a saved child main to its root once", async () => {
+  const info = vi.spyOn(toast, "info");
   const view = mount("b", [], "b-child");
   await waitFor(() =>
-    expect(view.rpcCalls.filter((c) => c.method === "listGroups")).toHaveLength(2),
+    expect(view.rpcCalls.filter((c) => c.method === "listGroups")).toHaveLength(
+      2,
+    ),
   );
   expect(view.rpcCalls.filter((c) => c.method === "saveMain")).toEqual([
     {
@@ -153,6 +166,8 @@ it("repairs a saved child main to its root once", async () => {
       },
     },
   ]);
+  expect(info.mock.calls).toEqual([["Main thread changed to b."]]);
+  info.mockRestore();
 });
 it("falls back to BB when lifecycle data cannot load", async () => {
   renderSlot(slot, props, {
