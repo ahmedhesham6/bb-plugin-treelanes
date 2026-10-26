@@ -48,15 +48,14 @@ export function buildGroups(
       byAge[0]!;
     // The Main Thread is a root of the group; a parent cycle keeps the candidate.
     let main = candidate;
-    for (const seen = new Set<string>(); main.parentThreadId; ) {
-      const parent = byId.get(main.parentThreadId);
-      if (!parent) break;
+    const seen = new Set([main.id]);
+    while (main.parentThreadId && byId.has(main.parentThreadId)) {
+      main = byId.get(main.parentThreadId)!;
       if (seen.has(main.id)) {
         main = candidate;
         break;
       }
       seen.add(main.id);
-      main = parent;
     }
     const shelves = members.map(shelfFor);
     return {

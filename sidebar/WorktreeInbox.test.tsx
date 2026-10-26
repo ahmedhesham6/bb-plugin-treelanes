@@ -64,14 +64,10 @@ it("settles all threads from the main menu and only one from a child menu", asyn
     ["b", "Settle all threads", { threadId: "b", includeWorktree: true }],
     ["b-child", "Settle thread", { threadId: "b-child" }],
   ] as const) {
-    fireEvent.pointerDown(
-      await screen.findByRole("button", { name: `Actions for ${id}` }),
-      { button: 0, ctrlKey: false },
-    );
+    fireEvent.pointerDown(await screen.findByRole("button", { name: `Actions for ${id}` }),
+      { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitem", { name: label }));
-    await waitFor(() =>
-      expect(view.rpcCalls).toContainEqual({ method: "settle", input }),
-    );
+    await waitFor(() => expect(view.rpcCalls).toContainEqual({ method: "settle", input }));
   }
 });
 it("opens only the selected worktree and follows external child navigation", async () => {
