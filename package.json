@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-treelanes",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Take each coding task from idea to merged pull request in its own Git worktree, with checks before every stage moves.",
   "license": "MIT",
   "repository": {
