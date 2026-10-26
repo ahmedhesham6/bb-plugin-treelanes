@@ -40,12 +40,23 @@ export function buildGroups(
     const byAge = [...members].sort(
       (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
     );
-    const ids = new Set(members.map((t) => t.id));
-    const main =
+    const byId = new Map(members.map((t) => [t.id, t]));
+    const candidate =
       members.find((t) => t.id === mains.get(id)) ??
       members.find((t) => t.id === preferred.get(id)) ??
-      byAge.find((t) => !t.parentThreadId || !ids.has(t.parentThreadId)) ??
+      byAge.find((t) => !t.parentThreadId || !byId.has(t.parentThreadId)) ??
       byAge[0]!;
+    // The Main Thread is a root of the group; a parent cycle keeps the candidate.
+    let main = candidate;
+    const seen = new Set([main.id]);
+    while (main.parentThreadId && byId.has(main.parentThreadId)) {
+      main = byId.get(main.parentThreadId)!;
+      if (seen.has(main.id)) {
+        main = candidate;
+        break;
+      }
+      seen.add(main.id);
+    }
     const shelves = members.map(shelfFor);
     return {
       id,

@@ -61,14 +61,49 @@ describe("worktree grouping", () => {
         () => "active",
       )[0]?.main.id,
     ).toBe("b");
+    expect(
+      buildGroups(
+        [a, b, fixture("c", "env", { parentThreadId: "a" })],
+        empty,
+        new Map([[worktreeKey(a)!, "c"]]),
+        empty,
+        () => "active",
+      )[0]?.main.id,
+    ).toBe("c");
   });
-  it("keeps a settled main in an active group and raises pinned children", () => {
+  it("resolves a saved or board child main to its root in the group", () => {
+    const root = fixture("root"),
+      child = fixture("child", "env", { parentThreadId: "root", createdAt: 2 }),
+      deep = fixture("deep", "env", { parentThreadId: "child", createdAt: 3 });
+    const key = worktreeKey(root)!;
+    const main = (mains: Map<string, string>, preferred: Map<string, string>) =>
+      buildGroups(
+        [root, child, deep],
+        mains,
+        preferred,
+        empty,
+        () => "active",
+      )[0]?.main.id;
+    expect(main(new Map([[key, "deep"]]), empty)).toBe("root");
+    const self = fixture("self", "env", { parentThreadId: "self" });
+    expect(
+      buildGroups(
+        [self],
+        new Map([[key, "self"]]),
+        empty,
+        empty,
+        () => "active",
+      )[0]?.main.id,
+    ).toBe("self");
+    expect(main(empty, new Map([[key, "child"]]))).toBe("root");
+  });
+  it("keeps a settled root as main in an active group and raises pinned children", () => {
     const groups = buildGroups(
       [
         fixture("main"),
         fixture("child", "env", { parentThreadId: "main", isPinned: true }),
       ],
-      empty,
+      new Map([[worktreeKey(fixture("main"))!, "child"]]),
       empty,
       empty,
       (t) => (t.id === "main" ? "settled" : "active"),

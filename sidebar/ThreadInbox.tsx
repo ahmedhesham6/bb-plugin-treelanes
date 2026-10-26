@@ -210,7 +210,9 @@ export function ThreadInbox({
         onSettle={() => lifecycle.settle(thread.id, isMain && group.worktree)}
         onSnooze={(until) => lifecycle.snooze(thread.id, until)}
         onMakeMain={
-          group.worktree && !isMain
+          group.worktree &&
+          !isMain &&
+          !group.members.some((t) => t.id === thread.parentThreadId)
             ? () => void saved.saveMain(group, thread.id)
             : undefined
         }
