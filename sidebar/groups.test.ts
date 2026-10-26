@@ -97,13 +97,13 @@ describe("worktree grouping", () => {
     ).toBe("self");
     expect(main(empty, new Map([[key, "child"]]))).toBe("root");
   });
-  it("keeps a settled main in an active group and raises pinned children", () => {
+  it("keeps a settled root as main in an active group and raises pinned children", () => {
     const groups = buildGroups(
       [
         fixture("main"),
         fixture("child", "env", { parentThreadId: "main", isPinned: true }),
       ],
-      empty,
+      new Map([[worktreeKey(fixture("main"))!, "child"]]),
       empty,
       empty,
       (t) => (t.id === "main" ? "settled" : "active"),
