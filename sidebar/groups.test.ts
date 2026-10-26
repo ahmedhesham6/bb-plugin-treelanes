@@ -61,6 +61,15 @@ describe("worktree grouping", () => {
         () => "active",
       )[0]?.main.id,
     ).toBe("b");
+    expect(
+      buildGroups(
+        [a, b, fixture("c", "env", { parentThreadId: "a" })],
+        empty,
+        new Map([[worktreeKey(a)!, "c"]]),
+        empty,
+        () => "active",
+      )[0]?.main.id,
+    ).toBe("c");
   });
   it("resolves a saved or board child main to its root in the group", () => {
     const root = fixture("root"),
