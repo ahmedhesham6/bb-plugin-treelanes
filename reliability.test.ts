@@ -147,8 +147,6 @@ function sdkFor(
     environments: {
       get: async ({ environmentId }: { environmentId: string }) =>
         options.environments?.[environmentId] ?? environment(environmentId),
-      pullRequest: async ({ environmentId }: { environmentId: string }) =>
-        options.pullRequests?.[environmentId] ?? { outcome: "absent" as const },
     },
     projects: {
       list: async () => [
@@ -157,7 +155,11 @@ function sdkFor(
       ],
     },
     plugins: {
-      callRpc: async () => ({ rows: [] }),
+      callRpc: async ({ pluginId, method, input }: { pluginId: string; method: string; input?: unknown }) => {
+        if (pluginId !== "bb--github-pr-status" || method !== "pullRequests") return { rows: [] };
+        return Object.fromEntries((input as { keys: string[] }).keys.map((key) =>
+          [key, options.pullRequests?.[key] ?? { outcome: "absent" as const }]));
+      },
     },
   };
 }
@@ -221,8 +223,16 @@ function seedLaunch(
     );
 }
 
+function pullRequestReads(harness: ReturnType<typeof createFakePluginHost>["harness"]) {
+  return harness.sdk.callsTo("plugins.callRpc")
+    .map(([args]) => args as { pluginId: string; method: string; input: { keys: string[] } })
+    .filter((args) => args.pluginId === "bb--github-pr-status" && args.method === "pullRequests")
+    .map((args) => args.input.keys);
+}
+
 describe("Board reliability", () => {
-  it.each([
+  // Reproductions of the removed environments.pullRequest call: the fix step removes each `.fails`.
+  it.fails.each([
     {
       reason: "no pull request",
       pullRequest: { outcome: "absent" as const },
@@ -263,12 +273,12 @@ describe("Board reliability", () => {
         stage: "done",
       }),
     ).rejects.toThrow(/verified merged pull request/i);
-    expect(harness.sdk.callsTo("environments.pullRequest")).toHaveLength(1);
+    expect(pullRequestReads(harness)).toEqual([[worktree.environmentId]]);
 
     await harness.lifecycle.dispose();
   });
 
-  it("accepts Done only for a merged pull request on the environment branch", async () => {
+  it.fails("accepts Done only for a merged pull request on the environment branch", async () => {
     const worktree = worktreeThread({
       id: "thread-done-accepted",
       projectId: "project-one",
@@ -297,6 +307,39 @@ describe("Board reliability", () => {
       projectId: worktree.projectId,
     })) as { cards: Array<{ stage: string }> };
     expect(board.cards[0]?.stage).toBe("done");
+
+    await harness.lifecycle.dispose();
+  });
+
+  it.fails("moves merged PR Watch cards to Done with one pull request read per pass", async () => {
+    const merged = worktreeThread({ id: "thread-merged", projectId: "project-one", title: "Merged", parentThreadId: null });
+    const waiting = worktreeThread({ id: "thread-waiting", projectId: "project-one", title: "Host down", parentThreadId: null,
+      environmentId: "environment-two", environmentBranchName: "feat/two" });
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "treelanes",
+      sdk: sdkFor([merged, waiting], {
+        environments: { "environment-two": environment("environment-two", "project-one", "feat/two") },
+        pullRequests: {
+          [merged.environmentId]: availablePullRequest("merged", "feat/board"),
+          [waiting.environmentId]: { outcome: "unavailable" as const, message: "Git host is unavailable" },
+        },
+      }),
+    });
+    await plugin(bb);
+    for (const environmentId of [merged.environmentId, waiting.environmentId]) {
+      seedWorktreeState(bb, { environmentId, stage: "pr", stageUpdatedAt: 100 });
+    }
+
+    await harness.behavior.runSchedule("reconcile-worktrees");
+
+    const board = (await harness.behavior.callRpc("getBoard", { projectId: "project-one" })) as {
+      cards: Array<{ environmentId: string; stage: string }>;
+    };
+    expect(Object.fromEntries(board.cards.map((card) => [card.environmentId, card.stage]))).toEqual({
+      [merged.environmentId]: "done",
+      [waiting.environmentId]: "pr",
+    });
+    expect(pullRequestReads(harness).map((keys) => [...keys].sort())).toEqual([[merged.environmentId, waiting.environmentId].sort()]);
 
     await harness.lifecycle.dispose();
   });

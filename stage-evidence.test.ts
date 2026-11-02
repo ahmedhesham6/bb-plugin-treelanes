@@ -385,4 +385,55 @@ describe("captureWorkspace", () => {
       captureWorkspace(diffFixture.sdk, "environment-one"),
     ).rejects.toThrow(/unavailable/u);
   });
+  it.fails("reads workspace status and diffs through the bb--git plugin", async () => {
+    const fixture = makeSdk({ files: { "src/file.ts": { content: "new" } } });
+    const legacy = fixture.sdk.environments as unknown as Record<string, (args: Record<string, unknown>) => Promise<unknown>>;
+    const rpcs: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const sdk = {
+      ...fixture.sdk,
+      environments: { get: legacy.get, diffFiles: legacy.diffFiles, diffFile: legacy.diffFile },
+      plugins: {
+        callRpc: async ({ pluginId, method, input }: { pluginId: string; method: string; input: Record<string, unknown> }) => {
+          if (pluginId !== "bb--git") throw new Error(`Unexpected RPC ${pluginId}.${method}`);
+          rpcs.push({ method, input });
+          if (method === "workspaceStatus") return legacy.status!(input);
+          const { target, ...rest } = input as { target: Record<string, unknown> };
+          if (method === "diff") return legacy.diff!({ ...rest, target: target.type, ...(target.mergeBaseBranch ? { mergeBaseBranch: target.mergeBaseBranch } : {}) });
+          throw new Error(`Unexpected RPC ${pluginId}.${method}`);
+        },
+      },
+    } as unknown as typeof fixture.sdk;
+
+    expect(await captureWorkspace(sdk, "environment-one")).toMatch(/^[0-9a-f]{64}$/u);
+    expect(rpcs).toEqual(expect.arrayContaining([
+      { method: "workspaceStatus", input: { environmentId: "environment-one", mergeBaseBranch: "main" } },
+      { method: "diff", input: expect.objectContaining({ environmentId: "environment-one", target: { type: "branch_committed", mergeBaseBranch: "main" } }) },
+      { method: "diff", input: expect.objectContaining({ environmentId: "environment-one", target: { type: "uncommitted" } }) },
+      { method: "diff", input: expect.objectContaining({ environmentId: "environment-one", target: { type: "all", mergeBaseBranch: "main" } }) },
+    ]));
+  });
+
+  it.fails("reads 100 changed files within a few host round trips", async () => {
+    const paths = Array.from({ length: 100 }, (_, index) => `src/file-${index}.ts`);
+    const fixture = makeSdk({
+      files: Object.fromEntries(paths.map((path) => [path, { content: `new ${path}` }])),
+      diffFiles: paths.map((path) => ({ path, previousPath: null, changeKind: "modified" as const,
+        additions: 1, deletions: 1, binary: false, origin: "tracked" as const, loadMode: "auto" as const })),
+    });
+    const slow = (read: (args: Record<string, unknown>) => Promise<unknown>) => async (args: Record<string, unknown>) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return read(args);
+    };
+    const sdk = fixture.sdk as unknown as {
+      environments: { diffFile: (args: Record<string, unknown>) => Promise<unknown> };
+      files: { read: (args: Record<string, unknown>) => Promise<unknown> };
+    };
+    sdk.environments.diffFile = slow(sdk.environments.diffFile);
+    sdk.files.read = slow(sdk.files.read);
+
+    const started = performance.now();
+    await captureWorkspace(fixture.sdk, "environment-one");
+    // 400 reads at 20 ms each: 2 s with four sequential reads per file and four files at a time.
+    expect(performance.now() - started).toBeLessThan(600);
+  });
 });

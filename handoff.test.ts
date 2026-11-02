@@ -21,6 +21,7 @@ async function setup(assigned = true, settings: Record<string, string | boolean>
   const retries: Array<{ threadId: string; turnRequestId?: string }> = [];
   const failedRequests = new Map<string, string>();
   const requests: Array<{ prompt?: string; providerId?: string; model?: string; reasoningLevel?: string }> = [];
+  const pullRequests: Record<string, unknown> = {};
   const { bb, harness } = createFakePluginHost({
     pluginId: "treelanes", agentSkillIds: shippedSkills,
     settings: { startInDesign: false, useInitiatingThread: false, ...settings },
@@ -58,6 +59,10 @@ async function setup(assigned = true, settings: Record<string, string | boolean>
         baseBranch: "main", mergeBaseBranch: "main", defaultBranch: "main", status: "ready", createdAt: 1, updatedAt: 2,
       }) },
       projects: { list: async () => [{ id: "project", name: "Project" }] },
+      plugins: { callRpc: async ({ pluginId, method, input }: { pluginId: string; method: string; input?: unknown }) => {
+        if (pluginId !== "bb--github-pr-status" || method !== "pullRequests") throw new Error(`Unexpected RPC ${pluginId}.${method}`);
+        return Object.fromEntries((input as { keys: string[] }).keys.map(key => [key, pullRequests[key] ?? { outcome: "absent" }]));
+      } },
     },
   });
   disposals.push(() => harness.lifecycle.dispose());
@@ -77,7 +82,7 @@ async function setup(assigned = true, settings: Record<string, string | boolean>
   const submit = (value: unknown) => harness.behavior.callAgentTool("treelanes_complete_stage", value, agent);
   const idle = (thread = root) => harness.behavior.emitThreadEvent("thread.idle", { thread, lastAssistantText: "Verified.\n[workflow:tdd-complete]" });
   const stage = () => (bb.storage.database().prepare("SELECT stage FROM worktree_cards WHERE environment_id = 'env'").get() as { stage: string }).stage;
-  return { snapshot, bb, harness, root, threads, visibility, requests, sends, retries, failedRequests, agent, task, context, receipt, submit, idle, stage };
+  return { snapshot, bb, harness, root, threads, visibility, requests, sends, retries, failedRequests, pullRequests, agent, task, context, receipt, submit, idle, stage };
 }
 
 async function atPrWatch() {
@@ -1491,5 +1496,141 @@ describe("saved stage evidence", () => {
     await t.harness.behavior.runCli(["pause", "env"]);
     await t.idle(); await t.harness.behavior.runCli(["reconcile"]);
     expect(t.stage()).toBe("tdd"); expect(t.requests).toHaveLength(0);
+  });
+});
+
+const quiet = { activeWorkflowCount: 0, activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 0, activePlanModeCount: 0, activeGoalCount: 0 };
+
+async function appliedSetup(requiredChecks = ["API regression"], firstChecks = ["API regression"]) {
+  const t = await setup(false);
+  await t.harness.behavior.callAgentTool("treelanes_deliver", { stage: "tdd", task: { ...t.task, deliveryTarget: "pr", requiredChecks } }, t.agent);
+  const plannerThread = t.threads[1]!;
+  const planner = { ...t.agent, threadId: plannerThread.id };
+  const steps = ["tdd", "quality", "simplify", "pr"].map((stage, index) => ({ id: stage, title: stage, stage,
+    instructions: "Complete and check", checks: index === 0 ? firstChecks : ["API regression"],
+    execution: { providerId: "codex", model: "small", reasoningLevel: "low", skills: [], reason: "Bounded work" } }));
+  await t.harness.behavior.callAgentTool("treelanes_apply_setup", { setup: { summary: "Full flow", steps } }, planner);
+  const call = async (tool: string, input: unknown, threadId: string) =>
+    JSON.parse(await t.harness.behavior.callAgentTool(tool, input, { ...t.agent, threadId }) as string);
+  return { ...t, planner, plannerThread, call };
+}
+
+// Reproductions of the saved Treelanes defects: the fix step removes each `.fails`.
+describe("board holds and gates", () => {
+  it.fails("starts the setup worker while another thread runs a background command", async () => {
+    const t = await setup(false);
+    t.threads.push(Object.assign({ ...t.root, id: "dev-server", title: "Dev server" }, { activity: { ...quiet, activeBackgroundCommandCount: 1 } }));
+    await t.harness.behavior.callAgentTool("treelanes_deliver", { stage: "tdd", task: t.task }, t.agent);
+    expect(t.requests).toHaveLength(1);
+  });
+
+  it.fails.each(["the orchestrator's own turn", "a background command"])("dispatches the first step during %s", async holder => {
+    const t = await appliedSetup();
+    if (holder === "the orchestrator's own turn") t.plannerThread.status = "active";
+    else Object.assign(t.root, { activity: { ...quiet, activeBackgroundCommandCount: 1 } });
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    expect(t.requests).toHaveLength(2);
+  });
+
+  it.fails("runs a recovery request that arrives during a running pass", async () => {
+    const t = await appliedSetup();
+    let reached!: () => void; let release!: () => void;
+    const atGate = new Promise<void>(resolve => { reached = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let first = true;
+    t.harness.sdk.stub("threads.queuedMessages.list", async () => {
+      if (!first) return [];
+      first = false; reached(); await gate;
+      return [{ id: "queued-before-idle" }];
+    });
+    const pass = t.harness.behavior.runSchedule("reconcile-worktrees");
+    await atGate;
+    const idle = t.harness.behavior.emitThreadEvent("thread.idle", { thread: t.plannerThread, lastAssistantText: "Plan saved" });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    release();
+    await Promise.all([pass, idle]);
+    expect(t.requests).toHaveLength(2);
+  });
+
+  it.fails("gives the orchestrator its board tools after its setup is applied", async () => {
+    const t = await appliedSetup();
+    const configuration = await t.harness.behavior.resolveAgentConfiguration({
+      thread: { id: t.plannerThread.id, title: t.plannerThread.title, parentThreadId: t.plannerThread.parentThreadId, sourceThreadId: null },
+      project: { id: "project", kind: "standard", name: "Project", gitRemoteUrl: null },
+      environment: { id: "env", name: "test", path: "/srv/worktree", workspaceProvisionType: "managed-worktree", branchName: "feat/test" },
+      host: { id: "host", name: "Host" }, provider: { id: "codex", model: "small" }, origin: { kind: null, pluginId: null },
+    });
+    expect(configuration.tools.map(tool => tool.name)).toContain("treelanes_move_card");
+    const moved = await t.harness.behavior.callAgentTool("treelanes_move_card", { stage: "review" }, t.planner).catch((error: Error) => error.message);
+    expect(String(moved)).not.toMatch(/Setup workers/);
+  });
+
+  it.fails("asks only the last implementation step for task-wide checks", async () => {
+    const t = await appliedSetup(["API regression", "Final gate"], ["Repro fails"]);
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    const complete = async (stage: string, names: string[]) => {
+      const worker = t.threads.at(-1)!;
+      const ctx = await t.call("treelanes_get_context", {}, worker.id);
+      expect(ctx.stage).toBe(stage);
+      const required = ctx.requiredChecks;
+      const result = await t.call("treelanes_complete_stage", { stage, stageUpdatedAt: ctx.stageUpdatedAt, taskRevision: ctx.taskRevision,
+        workspaceDigest: ctx.workspaceDigest, checks: names.map(name => ({ name, status: "passed", evidence: `${name}: 1 test passed` })),
+        decisionsResolved: true, openFindings: [], summary: `${stage} checked.` }, worker.id);
+      expect(result.recorded).toBe(true);
+      await t.harness.behavior.emitThreadEvent("thread.idle", { thread: worker, lastAssistantText: "Checks complete" });
+      return required;
+    };
+    expect(await complete("tdd", ["Repro fails"])).toEqual(["Repro fails"]);
+    expect(await complete("quality", ["API regression"])).toEqual(["API regression"]);
+    expect(await complete("simplify", ["API regression", "Final gate"])).toEqual(expect.arrayContaining(["API regression", "Final gate"]));
+  });
+
+  it.fails("keeps a stage worker from removing a task-wide check", async () => {
+    const t = await appliedSetup(["API regression", "Final gate"]);
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    const worker = t.threads.at(-1)!.id;
+    const ctx = await t.call("treelanes_get_context", {}, worker);
+    await expect(t.call("treelanes_set_task", { ...ctx.task, requiredChecks: ["API regression"] }, worker)).rejects.toThrow();
+    expect((await t.call("treelanes_get_context", {}, worker)).task.requiredChecks).toEqual(["API regression", "Final gate"]);
+  });
+
+  it.fails("names a failed check when decisions are also unresolved", async () => {
+    const t = await setup();
+    await expect(t.submit({ ...await t.receipt(), decisionsResolved: false,
+      checks: [{ name: "API regression", status: "failed", evidence: "gitleaks is not installed" }] })).rejects.toThrow(/API regression/);
+  });
+
+  it.fails("does not promise a retry for a failed worker when automatic retry is off", async () => {
+    const t = await setup();
+    await t.submit(await t.receipt());
+    await t.idle();
+    expect(t.stage()).toBe("quality");
+    t.threads.at(-1)!.status = "error";
+    await t.harness.behavior.setSettings({ autoAdvanceImplementation: false });
+    const health = JSON.parse((await t.harness.behavior.runCli(["health", "project"])).stdout!);
+    expect(health).toEqual([expect.objectContaining({ status: "worker-failed" })]);
+    expect(health[0].error).not.toMatch(/retries the same thread/);
+  });
+
+  it.fails("retries a failed PR Watch worker after a restart when Simplify to PR asks first", async () => {
+    const t = await atPrWatch();
+    await t.harness.behavior.setSettings({ simplifyToPrMode: "ask" });
+    await t.harness.behavior.runSchedule("reconcile-worktrees"); // Settles the settings pass before the restart.
+    const worker = t.threads.at(-1)!;
+    worker.status = "error";
+    const next = await t.harness.lifecycle.reload(plugin);
+    disposals.push(() => next.harness.lifecycle.dispose());
+    await next.harness.behavior.runService("workflow-recovery").done;
+    expect(t.retries).toEqual([expect.objectContaining({ threadId: worker.id })]);
+  });
+
+  it.fails("reads the open project threads once for a recovery pass and its worker start", async () => {
+    const t = await appliedSetup();
+    const before = t.harness.sdk.callsTo("threads.list").length;
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    expect(t.requests).toHaveLength(2);
+    const lists = t.harness.sdk.callsTo("threads.list").slice(before).map(args => args[0] as { archived?: boolean });
+    expect(lists.filter(args => args.archived)).toEqual([]);
+    expect(lists.length).toBeLessThanOrEqual(2);
   });
 });
