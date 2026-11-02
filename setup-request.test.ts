@@ -102,6 +102,16 @@ describe("setup proposal contract", () => {
     )).toThrow(/128.*checks|checks.*128/i);
   });
 
+  it("counts task-wide checks only in the last implementation step's budget", () => {
+    const checks = Array.from({ length: 128 }, (_, index) => `required-${index}`);
+    expect(() => validateSetupProposal(
+      task({ requiredChecks: checks }),
+      plan([step("reproduce", { checks: ["Reproduction fails"] }), step("fix", { checks: [checks[0]!] }),
+        step("pr", { stage: "pr", checks: [] })]),
+      "tdd", null, false,
+    )).not.toThrow();
+  });
+
   it("keeps the completed prefix and active step position during recovery", () => {
     const previous = task({
       setup: plan([

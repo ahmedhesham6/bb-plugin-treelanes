@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   captureWorkspace,
   completionEvidenceSchema,
@@ -431,9 +431,17 @@ describe("captureWorkspace", () => {
     sdk.environments.diffFile = slow(sdk.environments.diffFile);
     sdk.files.read = slow(sdk.files.read);
 
-    const started = performance.now();
-    await captureWorkspace(fixture.sdk, "environment-one");
-    // 400 reads at 20 ms each: 2 s with four sequential reads per file and four files at a time.
-    expect(performance.now() - started).toBeLessThan(600);
+    vi.useFakeTimers();
+    let finished = false;
+    const capture = captureWorkspace(fixture.sdk, "environment-one").then(() => { finished = true; });
+    try {
+      // Advance host latency without making this check depend on machine load.
+      await vi.advanceTimersByTimeAsync(600);
+      expect(finished).toBe(true);
+    } finally {
+      await vi.runAllTimersAsync();
+      await capture;
+      vi.useRealTimers();
+    }
   });
 });

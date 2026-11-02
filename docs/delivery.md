@@ -288,8 +288,8 @@ pause and checks the saved state. `health` lists pending starts, failures,
 blocked starts, workers waiting for input, and missing or stale evidence.
 `health` and `snapshot` report state and start no workers. PR Watch moves to Done after the
 `bb--github-pr-status` plugin confirms a merged pull request for the worktree
-branch. Each pass reads all PR Watch cards in one call; an unavailable read
-leaves those cards in PR Watch.
+branch. Each pass reads PR Watch cards in batches of at most 200; an
+unavailable read leaves that batch in PR Watch.
 
 ## Agent interface
 

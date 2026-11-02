@@ -23,8 +23,7 @@ function assertOperationalStage(stage: string): void {
 }
 
 function assertCheckBudget(step: SetupStep, task: TaskContext): void {
-  const checks = new Set([...requiredStageChecks(step.stage, task), ...step.checks]);
-  if (checks.size > 128) {
+  if (requiredStageChecks(step.stage, task, step.id).length > 128) {
     reject(`step ${JSON.stringify(step.id)} has more than 128 distinct checks`);
   }
 }
@@ -56,7 +55,7 @@ export function validateSetupProposal(
   normalizeLegacyDeliveryStages({ ...previous, setup: parsed });
   requirePrWatch({ ...previous, setup: parsed });
   validateKindSteps(previous, parsed, recovery ? parsed.steps.findIndex(step => step.id === activeStepId) : -1);
-  for (const step of parsed.steps) assertCheckBudget(step, previous);
+  for (const step of parsed.steps) assertCheckBudget(step, { ...previous, setup: parsed });
 
   if (!recovery) {
     if (parsed.steps[0]!.stage !== stage) {

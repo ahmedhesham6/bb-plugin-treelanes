@@ -163,8 +163,10 @@ function assertAvailable<T extends { outcome: string }>(
 }
 
 // The bb--git plugin serves workspace status and diffs; a failed call fails the read.
-function git<T>(sdk: Sdk, method: "workspaceStatus" | "diff", input: Record<string, unknown>) {
-  return sdk.plugins.callRpc({ pluginId: "bb--git", method, input: input as never, outputSchema: z.custom<T>() });
+function git<T>(sdk: Sdk, method: "workspaceStatus" | "diff", input: {
+  environmentId: string; mergeBaseBranch?: string; target?: { type: DiffTarget; mergeBaseBranch?: string };
+}) {
+  return sdk.plugins.callRpc({ pluginId: "bb--git", method, input, outputSchema: z.custom<T>() });
 }
 
 async function readSdk<T>(label: string, operation: () => Promise<T>): Promise<T> {

@@ -994,13 +994,15 @@ describe("saved stage evidence", () => {
     await t.harness.behavior.callAgentTool("treelanes_deliver", { stage: "tdd", task: t.task }, t.agent);
     await t.harness.behavior.callAgentTool("treelanes_set_task", { ...t.task, requiredChecks: [...t.task.requiredChecks, "Security CI"] }, t.agent);
     if (blocker === "pause") await t.harness.behavior.runCli(["pause", "env"]);
-    if (blocker === "live worker") t.threads[1]!.status = "active";
-    if (blocker === "pending input") Object.assign(t.threads[1]!, { hasPendingInteraction: true });
+    const other = { ...t.root, id: "other-thread" };
+    t.threads.push(other);
+    if (blocker === "live worker") other.status = "active";
+    if (blocker === "pending input") Object.assign(other, { hasPendingInteraction: true });
     await t.harness.behavior.runSchedule("reconcile-worktrees");
     expect(t.requests).toHaveLength(1);
     if (blocker === "pause") await t.harness.behavior.runCli(["resume", "env"]);
-    t.threads[1]!.status = "idle";
-    Object.assign(t.threads[1]!, { hasPendingInteraction: false });
+    other.status = "idle";
+    Object.assign(other, { hasPendingInteraction: false });
     await t.harness.behavior.runSchedule("reconcile-worktrees");
     expect(t.requests).toHaveLength(2);
   });
@@ -1516,6 +1518,81 @@ async function appliedSetup(requiredChecks = ["API regression"], firstChecks = [
 }
 
 describe("board holds and gates", () => {
+  it("starts setup in the active orchestrator's thread without waiting on its input", async () => {
+    const t = await setup(false, { useInitiatingThread: true });
+    t.root.status = "active";
+    t.harness.sdk.stub("threads.queuedMessages.list", async () => [{ id: "orchestrator-input" }]);
+    await t.harness.behavior.callAgentTool("treelanes_deliver", { stage: "tdd", task: t.task }, t.agent);
+    expect(t.sends).toEqual([expect.objectContaining({ threadId: t.root.id, mode: "steer" })]);
+  });
+
+  it("recovers the setup in its active orchestrator while a background command runs", async () => {
+    const t = await appliedSetup();
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    const worker = t.threads.at(-1)!;
+    t.plannerThread.status = "active";
+    Object.assign(t.root, { activity: { ...quiet, activeBackgroundCommandCount: 1 } });
+    await t.call("treelanes_recover", { reason: "Need a new plan", nextAction: "Inspect the parser and rerun the regression" }, worker.id);
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    expect(t.sends).toEqual([expect.objectContaining({ threadId: t.plannerThread.id, mode: "steer" })]);
+  });
+
+  it("waits for the original initiating thread when it is no longer the orchestrator", async () => {
+    const t = await appliedSetup();
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    t.root.status = "active";
+    await t.call("treelanes_recover", { reason: "Need a new plan", nextAction: "Inspect the parser and rerun the regression" }, t.threads.at(-1)!.id);
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    expect(t.sends).toEqual([]);
+    const health = JSON.parse((await t.harness.behavior.runCli(["health", "project"])).stdout!);
+    expect(health[0].error).toContain("root");
+  });
+
+  it("names a live thread instead of promising a retry that it holds", async () => {
+    const t = await appliedSetup();
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    t.threads.at(-1)!.status = "error";
+    t.root.status = "active";
+    const health = JSON.parse((await t.harness.behavior.runCli(["health", "project"])).stdout!);
+    expect(health[0].error).toContain("root");
+    expect(health[0].error).not.toMatch(/retries the same thread/);
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    expect(t.retries).toEqual([]);
+  });
+
+  it("advances checked work when its worker has only a background command", async () => {
+    const t = await appliedSetup();
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    const worker = t.threads.at(-1)!;
+    Object.assign(worker, { activity: { ...quiet, activeBackgroundCommandCount: 1 } });
+    await t.call("treelanes_complete_stage", await t.receipt(), worker.id);
+    await t.idle(worker);
+    expect(t.stage()).toBe("quality");
+    expect(t.requests).toHaveLength(3);
+  });
+
+  it("keeps the next worker pending while another thread has a turn", async () => {
+    const t = await appliedSetup();
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    const worker = t.threads.at(-1)!;
+    await t.call("treelanes_complete_stage", await t.receipt(), worker.id);
+    t.root.status = "active";
+    await t.idle(worker);
+    expect(t.requests).toHaveLength(2);
+    t.root.status = "idle";
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    expect(t.stage()).toBe("quality");
+    expect(t.requests).toHaveLength(3);
+  });
+
+  it("names an optional failed check when decisions are unresolved", async () => {
+    const t = await setup();
+    const receipt = await t.receipt();
+    await expect(t.submit({ ...receipt, decisionsResolved: false,
+      checks: [...receipt.checks, { name: "Optional lint", status: "failed", evidence: "Invalid source" }] }))
+      .rejects.toThrow(/Optional lint/);
+  });
+
   it("starts the setup worker while another thread runs a background command", async () => {
     const t = await setup(false);
     t.threads.push(Object.assign({ ...t.root, id: "dev-server", title: "Dev server" }, { activity: { ...quiet, activeBackgroundCommandCount: 1 } }));

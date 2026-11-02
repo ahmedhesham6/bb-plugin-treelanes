@@ -11,6 +11,7 @@ import { resolveStepExecution } from "./step-execution";
 import { noInput } from "./rpc-input";
 import { validateKindSteps } from "./task-kinds";
 import { createSetupAutomation, setupAutomationMigration } from "./setup-automation";
+import { dispatchHoldMessage, findDispatchHolder, holdsDispatch } from "./dispatch";
 import { createThreadRetry, threadRetryMigration } from "./thread-retry";
 import { createStageContinuation, stageContinuationMigration } from "./stage-continuation";
 import { createTddRepair, tddRepairMigration } from "./tdd-repair";
@@ -219,27 +220,17 @@ function displayTitle(thread: ThreadRow): string {
 function hasLiveWork(
   thread: Pick<ThreadRow, "status" | "activity">,
 ): boolean {
-  const activity = thread.activity;
-  return (
-    thread.status === "active" ||
-    thread.status === "pending" ||
-    thread.status === "starting" ||
-    thread.status === "stopping" ||
-    (activity?.activeWorkflowCount ?? 0) > 0 ||
-    (activity?.activeBackgroundAgentCount ?? 0) > 0 ||
-    (activity?.activeBackgroundCommandCount ?? 0) > 0 ||
-    (activity?.activePlanModeCount ?? 0) > 0 ||
-    (activity?.activeGoalCount ?? 0) > 0
-  );
+  return holdsDispatch(thread) || (thread.activity?.activeBackgroundCommandCount ?? 0) > 0;
 }
 
-// Background commands (dev servers, watchers) never hold dispatch or retry.
-function holdsDispatch(thread: Pick<ThreadRow, "status" | "activity">): boolean {
-  return hasLiveWork({ status: thread.status, activity: thread.activity && { ...thread.activity, activeBackgroundCommandCount: 0 } });
-}
-
-type PullRequestRow = { outcome: "available"; pullRequest: { state: "draft" | "open" | "merged" | "closed"; headRefName: string } & Record<string, unknown> }
-  | { outcome: "absent" } | { outcome: "unavailable"; message: string };
+const pullRequestRowSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("available"), pullRequest: z.object({
+    state: z.enum(["draft", "open", "merged", "closed"]), headRefName: z.string(),
+  }).passthrough() }),
+  z.object({ outcome: z.literal("absent") }),
+  z.object({ outcome: z.literal("unavailable"), message: z.string() }),
+]);
+type PullRequestRow = z.infer<typeof pullRequestRowSchema>;
 
 function worktreeStatus(threads: ThreadRow[]): ThreadRow["status"] {
   if (threads.some((thread) => thread.status === "error")) return "error";
@@ -492,7 +483,6 @@ export default async function plugin(bb: BbPluginApi) {
       addWorktreeHistory.run(request.environment_id, state.stage, request.kind === "initial" ? "Automatic setup accepted" : "Bounded plan recovery accepted", "automation", version);
     },
     listThreads: projectId => listThreads(projectId),
-    hasLiveWork: holdsDispatch,
     retryThread: threadRetry.retry,
     disposed: () => disposed,
   });
@@ -689,7 +679,7 @@ export default async function plugin(bb: BbPluginApi) {
       if (!launch.thread_id) continue;
       try {
         const thread = await bb.sdk.threads.get({ threadId: launch.thread_id });
-        if (thread.environmentId === environmentId && hasLiveWork(thread)) {
+        if (thread.environmentId === environmentId && holdsDispatch(thread)) {
           return thread;
         }
       } catch {
@@ -702,7 +692,8 @@ export default async function plugin(bb: BbPluginApi) {
   async function launchStageThreadOnce(
     environmentId: string, stage: StageId, stageUpdatedAt: number,
     prompt: string,
-    explicit = false,
+    explicit: boolean,
+    open: ThreadRow[],
   ) {
     if (disposed || paused(environmentId)) return null;
     const current = readWorktreeState.get(environmentId) as WorktreeStateRow | undefined;
@@ -731,10 +722,9 @@ export default async function plugin(bb: BbPluginApi) {
     if (!claimed) return null;
     const start = (async () => {
       const environment = await bb.sdk.environments.get({ environmentId });
-      const open = await listThreads(environment.projectId);
       // Only an earlier attempt can leave an orphan worker, which may since be archived.
-      const candidates = earlierAttempt ? [...open, ...await listThreads(environment.projectId, true)] : [];
-      const orphan = candidates.find(thread => thread.environmentId === environmentId && thread.title === launchTitle(environmentId, stage, stageUpdatedAt));
+      const matchesLaunch = (thread: ThreadRow) => thread.environmentId === environmentId && thread.title === launchTitle(environmentId, stage, stageUpdatedAt);
+      const orphan = open.find(matchesLaunch) ?? (earlierAttempt ? (await listThreads(environment.projectId, true)).find(matchesLaunch) : undefined);
       const liveWorker = orphan ?? await findLiveStageWorker(environmentId, stage);
       const thread = liveWorker ?? await startStageThread(environmentId, prompt, stage, stageUpdatedAt, open);
       saveStageThreadLaunch.run(environmentId, stage, stageUpdatedAt, "started", thread.id);
@@ -756,23 +746,19 @@ export default async function plugin(bb: BbPluginApi) {
     if (setupAutomation.pending(environmentId)) return null;
     if (blockedAttempt(environmentId)) throw new Error("Recorded checks are blocked; do not restart the same stage. Read context for the evidence.");
     const config = await settings.get();
-    if (stage === "tdd") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.tddPrompt, explicit);
-    }
-    if (stage === "quality") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.reviewPrompt, explicit);
-    }
-    if (stage === "simplify") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.simplifyPrompt, explicit);
-    }
+    const prompts: Partial<Record<StageId, string>> = {
+      tdd: config.tddPrompt, quality: config.reviewPrompt, simplify: config.simplifyPrompt, pr: config.prPrompt,
+    };
+    const prompt = prompts[stage];
+    if (prompt === undefined) return null;
     if (stage === "pr" && config.simplifyToPrMode === "ask" && !explicit) {
       addPendingStageThreadLaunch.run(environmentId, stage, stageUpdatedAt);
       return null;
     }
-    if (stage === "pr") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.prPrompt, explicit);
-    }
-    return null;
+    const environment = await bb.sdk.environments.get({ environmentId });
+    const open = await listThreads(environment.projectId);
+    if (await findDispatchHolder(bb.sdk, open.filter(thread => thread.environmentId === environmentId), setupAutomation.orchestrator(environmentId))) return null;
+    return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, prompt, explicit, open);
   }
 
   async function moveWorktree(
@@ -921,8 +907,15 @@ export default async function plugin(bb: BbPluginApi) {
   async function readPullRequests(environmentIds: string[]) {
     const rows: Record<string, PullRequestRow | undefined> = {};
     for (let start = 0; start < environmentIds.length; start += 200) {
-      Object.assign(rows, await bb.sdk.plugins.callRpc({ pluginId: "bb--github-pr-status", method: "pullRequests",
-        input: { keys: environmentIds.slice(start, start + 200) }, outputSchema: z.custom<Record<string, PullRequestRow>>() }));
+      const keys = environmentIds.slice(start, start + 200);
+      try {
+        Object.assign(rows, await bb.sdk.plugins.callRpc({ pluginId: "bb--github-pr-status", method: "pullRequests",
+          input: { keys }, outputSchema: z.record(z.string(), pullRequestRowSchema) }));
+      } catch (error) {
+        const message = `The bb--github-pr-status read failed: ${error instanceof Error ? error.message : String(error)}`;
+        bb.log.error(message);
+        for (const key of keys) rows[key] = { outcome: "unavailable", message };
+      }
     }
     return rows;
   }
@@ -930,9 +923,7 @@ export default async function plugin(bb: BbPluginApi) {
   async function requireMergedPullRequest(environmentId: string, row?: PullRequestRow) {
     const [environment, result] = await Promise.all([
       bb.sdk.environments.get({ environmentId }),
-      row ?? readPullRequests([environmentId]).then(rows => rows[environmentId], (error: unknown) => {
-        throw new Error(`Done requires a verified merged pull request. The bb--github-pr-status read failed: ${error instanceof Error ? error.message : String(error)}`);
-      }),
+      row ?? readPullRequests([environmentId]).then(rows => rows[environmentId]),
     ]);
     if (!result) throw new Error("Done requires a verified merged pull request. bb--github-pr-status returned no row for this worktree.");
     if (result.outcome === "unavailable") throw new Error(`Done requires a verified merged pull request. Pull request status is unavailable: ${result.message}`);
@@ -947,14 +938,6 @@ export default async function plugin(bb: BbPluginApi) {
     return task?.deliveryTarget === "pr" || task?.setup?.steps.at(-1)?.stage === "pr";
   }
 
-  // Task-wide checks gate only the last implementation step before PR Watch.
-  function completionChecks(state: WorktreeStateRow, task: TaskContext | null) {
-    if (state.stage === "design") return task?.stageChecks?.design ?? [];
-    const step = activeSetupStep(task?.setup, state.active_step_id);
-    const gate = !step || step.id === task?.setup?.steps.filter(item => item.stage !== "pr").at(-1)?.id;
-    return [...new Set([...requiredStageChecks(state.stage, task && (gate ? task : { ...task, requiredChecks: [] })), ...(step?.checks ?? [])])];
-  }
-
   function blockedAttempt(environmentId: string) {
     const state = readWorktreeState.get(environmentId) as WorktreeStateRow | undefined;
     const row = db.prepare("SELECT * FROM worktree_blocked_attempts WHERE environment_id = ?").get(environmentId) as {
@@ -965,7 +948,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (row.stage_updated_at !== state?.updated_at || row.task_revision !== saved.revision ||
         row.thread_id !== state.owner_thread_id) return null;
     const evidence = completionEvidenceSchema.parse(JSON.parse(row.evidence_json));
-    const waitingForUser = state.stage !== "design" && prDelivery(saved.task) && onlyNonTaskFailures(completionChecks(state, saved.task), evidence);
+    const waitingForUser = state.stage !== "design" && prDelivery(saved.task) && onlyNonTaskFailures(requiredStageChecks(state.stage, saved.task, state.active_step_id), evidence);
     return { reason: row.reason, recordedAt: row.recorded_at, evidence, waitingForUser };
   }
 
@@ -1008,7 +991,7 @@ export default async function plugin(bb: BbPluginApi) {
       blockedAttempt: blockedAttempt(environmentId),
       activeStep, nextStep, setupComplete: Boolean(db.prepare("SELECT 1 FROM worktree_setup_outcomes WHERE environment_id = ? AND task_revision = ?").get(environmentId, saved.revision)), completedStepIds: saved.task?.setup?.steps.slice(0, Math.max(0, saved.task.setup.steps.findIndex(step => step.id === state.active_step_id))).map(step => step.id) ?? [],
       execution: executionRow?.execution_json ? JSON.parse(executionRow.execution_json) : null,
-      requiredChecks: completionChecks(state, saved.task),
+      requiredChecks: requiredStageChecks(state.stage, saved.task, state.active_step_id),
       nextStage: saved.task?.setup ? nextStep?.stage ?? null : nextDeliveryStage(state.stage, saved.task),
       paused: paused(environmentId),
       ...(snapshot ? { workspaceDigest: await captureWorkspace(bb.sdk, environmentId) } : {}) };
@@ -1026,6 +1009,7 @@ export default async function plugin(bb: BbPluginApi) {
     const current = taskFor(context.environmentId);
     // A board-dispatched stage worker cannot loosen its own gate; the orchestrator and the user's thread can.
     if (current.task?.requiredChecks.some(check => !task.requiredChecks.includes(check)) &&
+        threadId !== setupAutomation.orchestrator(context.environmentId) &&
         db.prepare("SELECT 1 FROM worktree_stage_thread_launches WHERE environment_id = ? AND thread_id = ?").get(context.environmentId, threadId)) {
       throw new Error("Only the orchestrator can remove a required check. Keep every saved requiredChecks entry.");
     }
@@ -1049,7 +1033,7 @@ export default async function plugin(bb: BbPluginApi) {
     const correctedSelection = launch && ["failed", "blocked"].includes(launch.status) && !prepared?.execution_json &&
       JSON.stringify(activeSetupStep(current.task?.setup, state.active_step_id)?.execution) !== JSON.stringify(activeSetupStep(task.setup, state.active_step_id)?.execution);
     for (const step of task.setup?.steps ?? []) {
-      if (new Set([...requiredStageChecks(step.stage, task), ...step.checks]).size > 128) throw new Error("A step can require at most 128 distinct checks.");
+      if (requiredStageChecks(step.stage, task, step.id).length > 128) throw new Error("A step can require at most 128 distinct checks.");
     }
     if (JSON.stringify(current.task) === JSON.stringify(task)) return { taskRevision: current.revision, task };
     const revision = current.revision + 1;
@@ -1238,14 +1222,15 @@ export default async function plugin(bb: BbPluginApi) {
       const check = checks.get(name);
       return !check || (check.status !== "passed" && !nonTaskFailure(check));
     });
+    const failedChecks = evidence.checks.filter(check => !["passed", "skipped"].includes(check.status) && !nonTaskFailure(check));
     const waitingForUser = prDelivery(context.task) && evidence.stage !== "design" && onlyNonTaskFailures(context.requiredChecks, evidence);
     const problem = [
       !evidence.decisionsResolved ? "Resolve the required decisions before completion." : "",
       evidence.openFindings.length ? `Resolve the required findings before completion: ${evidence.openFindings.join("; ")}` : "",
       missingChecks.length ? `Required check has not passed: ${missingChecks.join("; ")}` : "",
+      failedChecks.length ? `Failed checks: ${failedChecks.map(check => check.name).join("; ")}` : "",
     ].filter(Boolean).join(" ") || (waitingForUser ? "No required check passed. Every required check failed for base or environment reasons."
-      : evidence.checks.some(check => !["passed", "skipped"].includes(check.status) && !nonTaskFailure(check)) ||
-        (evidence.stage !== "design" && !evidence.checks.some(check => check.status === "passed"))
+      : (evidence.stage !== "design" && !evidence.checks.some(check => check.status === "passed"))
         ? "Implementation needs passing check evidence. Optional skipped checks need a reason." : null);
     // Re-read after the host snapshot before saving either success or a blocker.
     const state = readWorktreeState.get(context.environmentId) as WorktreeStateRow;
@@ -1324,7 +1309,7 @@ export default async function plugin(bb: BbPluginApi) {
       const config = await settings.get();
       if (state.stage === "design" ? !config.autoAdvanceGrilling : !config.autoAdvanceImplementation) return;
       const worker = await bb.sdk.threads.get({ threadId });
-      if (hasLiveWork(worker) || (await bb.sdk.threads.interactions.list({ threadId })).length) return;
+      if (holdsDispatch(worker) || (await bb.sdk.threads.interactions.list({ threadId })).length) return;
       if ((await bb.sdk.threads.queuedMessages.list({ threadId })).length) return;
       if (await captureWorkspace(bb.sdk, environmentId) !== evidence.workspaceDigest) {
         recordProblem("Files changed after completion evidence was recorded. Rerun the required checks."); return;
@@ -1370,18 +1355,15 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function reconcilePass(options: ReconcileScope) {
     const inScope = (environmentId: string) => !options.environmentIds || options.environmentIds.has(environmentId);
-    if (options.environmentIds) for (const environmentId of options.environmentIds) await setupAutomation.tick(environmentId, options.force);
-    else await setupAutomation.tickAll(options.force);
     const listed = await listThreads(options.projectId ?? undefined);
+    if (options.environmentIds) for (const environmentId of options.environmentIds) await setupAutomation.tick(environmentId, options.force, listed);
+    else await setupAutomation.tickAll(options.force, listed);
     const board = await getBoard(options.projectId, listed);
     const config = await settings.get();
     const prCards = board.cards.filter(card => inScope(card.environmentId) && !paused(card.environmentId) &&
       (readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined)?.stage === "pr").map(card => card.environmentId);
     // A failed read skips PR Watch cards in this pass; other cards continue.
-    const pullRequests = prCards.length ? await readPullRequests(prCards).catch((error: unknown) => {
-      bb.log.error(`Pull request status read failed: ${error instanceof Error ? error.message : String(error)}`);
-      return {} as Record<string, PullRequestRow | undefined>;
-    }) : {};
+    const pullRequests = prCards.length ? await readPullRequests(prCards) : {};
     for (const card of board.cards) {
       if (disposed) break;
       if (!inScope(card.environmentId)) continue;
@@ -1403,17 +1385,8 @@ export default async function plugin(bb: BbPluginApi) {
         }
         // The orchestrator's own turn and background work never hold dispatch or retry.
         const orchestratorId = setupAutomation.orchestrator(card.environmentId);
-        const others = threads.filter(thread => thread.id !== orchestratorId);
-        let holder = others.find(thread => holdsDispatch(thread) || thread.hasPendingInteraction);
-        for (const thread of holder ? [] : others) {
-          if ((await bb.sdk.threads.queuedMessages.list({ threadId: thread.id })).length ||
-              (await bb.sdk.threads.interactions.list({ threadId: thread.id })).length) { holder = thread; break; }
-        }
-        if (holder) {
-          db.prepare("UPDATE worktree_stage_thread_launches SET last_error = ? WHERE environment_id = ? AND stage = ? AND stage_updated_at = ? AND status = 'pending'")
-            .run(`Waiting for thread ${holder.id} (${displayTitle(holder)}) to finish its work.`, card.environmentId, state.stage, state.updated_at);
-          continue;
-        }
+        const holder = await findDispatchHolder(bb.sdk, threads, orchestratorId);
+        if (holder) continue;
         if ((await bb.sdk.environments.get({ environmentId: card.environmentId })).status !== "ready") continue;
         const blocker = blockedAttempt(card.environmentId);
         if (blocker) {
@@ -1525,7 +1498,8 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   async function health(projectId: string | null) {
-    const board = await getBoard(projectId);
+    const listed = await listThreads(projectId ?? undefined);
+    const board = await getBoard(projectId, listed);
     const config = await settings.get();
     return [...await taskMapHealth(), ...(await Promise.all(board.cards.map(async card => {
       const launch = readStageThreadLaunch.get(card.environmentId, card.stage, card.stageUpdatedAt) as StageThreadLaunchRow | undefined;
@@ -1548,30 +1522,35 @@ export default async function plugin(bb: BbPluginApi) {
           threadId: retryThreadId, paused: paused(card.environmentId), waitingForInput: card.hasPendingInteraction, hasLiveWork: false }];
       }
       const setupJob = setupAutomation.latest(card.environmentId);
+      const holder = await findDispatchHolder(bb.sdk, listed.filter(thread => thread.environmentId === card.environmentId), setupAutomation.orchestrator(card.environmentId));
       if (!paused(card.environmentId) && setupJob &&
           (["pending", "starting", "started", "blocked"].includes(setupJob.status) ||
            (setupJob.status === "stale" && setupJob.stage_updated_at === card.stageUpdatedAt))) {
         if (setupJob.status === "started" && setupJob.thread_id && !setupJob.last_error) {
           const planner = await bb.sdk.threads.get({ threadId: setupJob.thread_id }).catch(() => null);
-          if (planner && hasLiveWork(planner) && !card.hasPendingInteraction &&
+          if (planner && holdsDispatch(planner) && !card.hasPendingInteraction && !holder &&
               !(await bb.sdk.threads.interactions.list({ threadId: planner.id })).length) return [];
         }
         return [{ environmentId: card.environmentId, projectId: card.projectId, stage: card.stage, stageUpdatedAt: card.stageUpdatedAt,
-          status: `setup-${setupJob.status}`, attempts: setupJob.attempts, error: setupJob.last_error,
+          status: `setup-${setupJob.status}`, attempts: setupJob.attempts, error: holder ? dispatchHoldMessage(holder) : setupJob.last_error,
           waitingForInput: card.hasPendingInteraction, hasLiveWork: card.status === "active" }];
       }
       if (paused(card.environmentId) || !launch || launch.status === "paused") return [];
       let status: string = launch.status;
-      let error = launch.last_error;
+      let error = holder ? dispatchHoldMessage(holder) : launch.last_error;
       if (launch.status === "started") {
         const owner = launch.thread_id ? await bb.sdk.threads.get({ threadId: launch.thread_id }).catch(() => null) : null;
         if (!owner || owner.deletedAt || owner.archivedAt || owner.environmentId !== card.environmentId) { status = "worker-unavailable"; error = "The assigned worker is unavailable. Inspect it before resuming work."; }
-        else if (owner.status === "error") { status = "worker-failed"; error ??= config.autoAdvanceImplementation
-          ? "The stage worker failed. The board retries the same thread within its saved retry limit."
-          : "The stage worker failed. Automatic retry is off; retry the thread or run bb treelanes resume."; }
+        else if (owner.status === "error") {
+          status = "worker-failed";
+          error ??= config.autoAdvanceImplementation
+            ? "The stage worker failed. Inspect this thread or run bb treelanes resume to check its retry state."
+            : "The stage worker failed. Automatic retry is off; retry the thread or run bb treelanes resume.";
+        }
         else if ((await bb.sdk.threads.interactions.list({ threadId: owner.id })).length) { status = "waiting-for-decision"; error ??= "The stage worker has a pending question or approval."; }
-        else if (hasLiveWork(owner) || (await bb.sdk.threads.queuedMessages.list({ threadId: owner.id })).length) return [];
-        else if (error) status = "evidence-stale";
+        else if (holdsDispatch(owner) || (await bb.sdk.threads.queuedMessages.list({ threadId: owner.id })).length) return [];
+        else if (holder) status = "waiting-for-thread";
+        else if (launch.last_error) status = "evidence-stale";
         else if (card.stage !== "pr" && !readResult.get(card.environmentId, card.stageUpdatedAt)) {
           status = "evidence-needed"; error = "The worker is idle without completion evidence. It may have been stopped; no automatic restart was attempted.";
         } else return [];

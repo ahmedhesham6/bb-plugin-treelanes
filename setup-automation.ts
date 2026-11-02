@@ -4,6 +4,7 @@ import type { SetupPlan } from "./setup-plan";
 import { buildSetupPrompt, validateSetupProposal } from "./setup-request";
 import { resolveStepExecution, stepExecutionSchema } from "./step-execution";
 import { requireStepChoices, stepChoices, type Choices } from "./task-map";
+import { dispatchHoldMessage, findDispatchHolder } from "./dispatch";
 
 type Db = ReturnType<BbPluginApi["storage"]["database"]>;
 type Thread = { id: string; projectId: string; environmentId?: string | null; providerId: string;
@@ -39,7 +40,6 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
   choices(): Choices;
   commit(request: SetupRequest, plan: SetupPlan): void;
   listThreads(projectId: string): Promise<Thread[]>;
-  hasLiveWork(thread: Thread): boolean;
   retryThread(threadId: string, environmentId: string, assignment: string, eligible: () => boolean, force?: boolean): Promise<void>;
   disposed(): boolean;
 }) {
@@ -114,7 +114,7 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
     return thread.hasPendingInteraction || (await bb.sdk.threads.interactions.list({ threadId: thread.id })).length > 0 ||
       (await bb.sdk.threads.queuedMessages.list({ threadId: thread.id })).length > 0;
   }
-  async function tickUnlocked(env: string, force = false) {
+  async function tickUnlocked(env: string, force = false, listed?: Thread[]) {
     if (hooks.disposed()) return;
     let job = refreshInitial(env);
     if (!job || ["applied", "stale"].includes(job.status) || (job.status === "blocked" && !job.thread_id)) return;
@@ -129,7 +129,7 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
     }
     const run = readRun(env)!;
     const source = await bb.sdk.threads.get({ threadId: run.initiator_thread_id });
-    const threads = (await hooks.listThreads(source.projectId)).filter(thread => thread.environmentId === env);
+    const threads = (listed ?? await hooks.listThreads(source.projectId)).filter(thread => thread.environmentId === env);
     if (job.status === "starting") {
       const orphan = threads.find(thread => job!.thread_id ? thread.id === job!.thread_id : (thread.title === title(job!) || thread.title === `Workflow setup [${job!.environment_id}:${job!.id}:${job!.attempts}]`));
       if (orphan) {
@@ -142,6 +142,7 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
         return;
       }
     }
+    if (await findDispatchHolder(bb.sdk, threads, orchestrator(env))) return;
     if (job.thread_id && ["pending", "started", "blocked"].includes(job.status)) {
       // Older versions queued a replacement after a worker failed or went idle.
       // Retain that assignment and allow its worker to submit a corrected plan.
@@ -151,10 +152,6 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
         return;
       }
       db.prepare("UPDATE worktree_setup_requests SET status = 'started', last_error = NULL WHERE id = ?").run(job.id);
-      for (const thread of threads) {
-        if (await waiting(thread)) return;
-        if (thread.id !== run.initiator_thread_id && hooks.hasLiveWork(thread)) return;
-      }
       if (worker.status === "error") {
         const id = job.id;
         await hooks.retryThread(worker.id, env, `setup:${id}`, () => {
@@ -167,10 +164,6 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       }
       return;
     }
-    for (const thread of threads) {
-      if (await waiting(thread)) return;
-      if (thread.id !== run.initiator_thread_id && hooks.hasLiveWork(thread)) return;
-    }
     if (job.next_attempt_at > Date.now() || job.attempts >= 2) return;
     const coordinatorId = job.kind !== "initial" ? orchestrator(env) : null;
     const executionSource = coordinatorId ? await bb.sdk.threads.get({ threadId: coordinatorId }) : source;
@@ -182,7 +175,6 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       permissionMode: execution.permissionMode ?? "auto", ...(execution.serviceTier ? { serviceTier: execution.serviceTier } : {}) };
     const saved = job.kind === "initial" ? hooks.choices().orchestrator : undefined;
     const reuseSource = (await hooks.useInitiatingThread()) && (!saved?.providerId || saved.providerId === source.providerId);
-    if (reuseSource && hooks.hasLiveWork(source)) return;
     let selected = inheritedChoice;
     if (saved?.providerId) {
       const catalog = await bb.sdk.providers.models({ environmentId: env, providerId: saved.providerId });
@@ -234,9 +226,9 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       // Leave the starting claim intact until orphan lookup settles the uncertain spawn.
     }
   }
-  async function tick(env: string, force = false) {
+  async function tick(env: string, force = false, listed?: Thread[]) {
     if (locks.has(env)) return locks.get(env);
-    const promise = tickUnlocked(env, force); locks.set(env, promise);
+    const promise = tickUnlocked(env, force, listed); locks.set(env, promise);
     try { await promise; }
     catch (error) {
       if (!hooks.disposed()) {
@@ -255,10 +247,9 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
     }
     const context = fresh(job);
     if (await waiting(thread)) throw new Error("Resolve pending input before applying a setup.");
-    const run = readRun(job.environment_id)!;
-    for (const other of (await hooks.listThreads(thread.projectId)).filter(t => t.environmentId === job.environment_id && t.id !== threadId)) {
-      if (await waiting(other) || (other.id !== run.initiator_thread_id && hooks.hasLiveWork(other))) throw new Error("Another thread has live work or pending input.");
-    }
+    const others = (await hooks.listThreads(thread.projectId)).filter(t => t.environmentId === job.environment_id && t.id !== threadId);
+    const holder = await findDispatchHolder(bb.sdk, others, orchestrator(job.environment_id));
+    if (holder) throw new Error(dispatchHoldMessage(holder));
     validateSetupProposal(context.task!, plan, context.stage, context.activeStepId, job.kind === "recovery");
     const active = job.kind === "recovery" ? plan.steps.findIndex(step => step.id === context.activeStepId) : 0;
     requireStepChoices(context.task!.kind, plan.steps.slice(Math.max(0, active)), hooks.choices());
@@ -272,9 +263,10 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       return { saved: true, taskRevision: hooks.context(job.environment_id).taskRevision, dispatch: "Dispatch starts when the setup worker's turn ends." };
     })();
   }
-  async function tickAll(force = false) {
+  async function tickAll(force = false, listed?: Thread[]) {
     const rows = db.prepare("SELECT environment_id FROM worktree_delivery_runs").all() as { environment_id: string }[];
-    await Promise.all(rows.map(async row => { try { await tick(row.environment_id, force); } catch (error) { if (!hooks.disposed()) bb.log.error(`Setup recovery for ${row.environment_id}: ${String(error)}`); } }));
+    await Promise.all(rows.filter(row => !listed || listed.some(thread => thread.environmentId === row.environment_id))
+      .map(async row => { try { await tick(row.environment_id, force, listed); } catch (error) { if (!hooks.disposed()) bb.log.error(`Setup recovery for ${row.environment_id}: ${String(error)}`); } }));
   }
   return { enqueue, reopen: (env: string, reason: string) => insert(env, "reopen", reason), openDesignGate, recover, apply, tick, tickAll, pending, isPlanner, latest, orchestrator, requestedTarget: (env: string) => { const run = readRun(env); return run ? (JSON.parse(run.request_json) as TaskContext).deliveryTarget : undefined; }, enabled: (env: string) => Boolean(readRun(env)),
     exhausted: (env: string) => (readRun(env)?.recovery_count ?? 0) >= 2 };

@@ -343,6 +343,41 @@ describe("Board reliability", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("keeps other pull request batches when one batch fails", async () => {
+    const threads = Array.from({ length: 201 }, (_, index) => worktreeThread({
+      id: `thread-${index}`, environmentId: `env-${index}`, projectId: "project-one", parentThreadId: null,
+    }));
+    const { bb, harness } = createFakePluginHost({ pluginId: "treelanes", sdk: sdkFor(threads) });
+    await plugin(bb);
+    harness.sdk.stub("threads.list", async ({ offset = 0, limit = 100 }) => threads.slice(offset, offset + limit));
+    harness.sdk.stub("plugins.callRpc", async ({ input }) => {
+      const { keys } = input as { keys: string[] };
+      if (keys.length === 200) throw new Error("First batch is unavailable");
+      return Object.fromEntries(keys.map(key => [key, availablePullRequest("merged")]));
+    });
+    for (const thread of threads) seedWorktreeState(bb, { environmentId: thread.environmentId, stage: "pr", stageUpdatedAt: 100 });
+    try {
+      await harness.behavior.runSchedule("reconcile-worktrees");
+      const board = await harness.behavior.callRpc("getBoard", { projectId: "project-one" }) as {
+        cards: Array<{ environmentId: string; stage: string }>;
+      };
+      expect(board.cards.filter(card => card.stage === "pr")).toHaveLength(200);
+      expect(board.cards.filter(card => card.stage === "done")).toHaveLength(1);
+      expect(pullRequestReads(harness).map(keys => keys.length)).toEqual([200, 1]);
+    } finally { await harness.lifecycle.dispose(); }
+  });
+
+  it("names the pull request RPC failure when Done cannot verify a merge", async () => {
+    const thread = worktreeThread({ id: "thread", projectId: "project-one", parentThreadId: null });
+    const { bb, harness } = createFakePluginHost({ pluginId: "treelanes", sdk: sdkFor([thread]) });
+    await plugin(bb);
+    harness.sdk.stub("plugins.callRpc", async () => { throw new Error("bb--github-pr-status is not installed"); });
+    try {
+      await expect(harness.behavior.callRpc("moveCard", { environmentId: thread.environmentId, stage: "done" }))
+        .rejects.toThrow(/bb--github-pr-status is not installed/);
+    } finally { await harness.lifecycle.dispose(); }
+  });
+
   it("does not let an unrelated TDD thread advance the Worktree Stage", async () => {
     const root = worktreeThread({
       id: "thread-tdd-root",
