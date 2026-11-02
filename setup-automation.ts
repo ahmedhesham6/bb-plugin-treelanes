@@ -4,7 +4,7 @@ import type { SetupPlan } from "./setup-plan";
 import { buildSetupPrompt, validateSetupProposal } from "./setup-request";
 import { resolveStepExecution, stepExecutionSchema } from "./step-execution";
 import { requireStepChoices, stepChoices, type Choices } from "./task-map";
-import { dispatchHoldMessage, findDispatchHolder } from "./dispatch";
+import { findDispatchHolder } from "./dispatch";
 
 type Db = ReturnType<BbPluginApi["storage"]["database"]>;
 type Thread = { id: string; projectId: string; environmentId?: string | null; providerId: string;
@@ -247,9 +247,7 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
     }
     const context = fresh(job);
     if (await waiting(thread)) throw new Error("Resolve pending input before applying a setup.");
-    const others = (await hooks.listThreads(thread.projectId)).filter(t => t.environmentId === job.environment_id && t.id !== threadId);
-    const holder = await findDispatchHolder(bb.sdk, others, orchestrator(job.environment_id));
-    if (holder) throw new Error(dispatchHoldMessage(holder));
+    // Saving a plan never waits for other threads; dispatch waits for them instead.
     validateSetupProposal(context.task!, plan, context.stage, context.activeStepId, job.kind === "recovery");
     const active = job.kind === "recovery" ? plan.steps.findIndex(step => step.id === context.activeStepId) : 0;
     requireStepChoices(context.task!.kind, plan.steps.slice(Math.max(0, active)), hooks.choices());

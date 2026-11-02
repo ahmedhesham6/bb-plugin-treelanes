@@ -742,6 +742,8 @@ export default async function plugin(bb: BbPluginApi) {
     stage: StageId,
     stageUpdatedAt: number,
     explicit = false,
+    // Board dispatch waits for other threads; a user's start or move does not.
+    waitForThreads = !explicit,
   ) {
     if (setupAutomation.pending(environmentId)) return null;
     if (blockedAttempt(environmentId)) throw new Error("Recorded checks are blocked; do not restart the same stage. Read context for the evidence.");
@@ -757,7 +759,7 @@ export default async function plugin(bb: BbPluginApi) {
     }
     const environment = await bb.sdk.environments.get({ environmentId });
     const open = await listThreads(environment.projectId);
-    if (await findDispatchHolder(bb.sdk, open.filter(thread => thread.environmentId === environmentId), setupAutomation.orchestrator(environmentId))) return null;
+    if (waitForThreads && await findDispatchHolder(bb.sdk, open.filter(thread => thread.environmentId === environmentId), setupAutomation.orchestrator(environmentId))) return null;
     return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, prompt, explicit, open);
   }
 
@@ -818,7 +820,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (old?.stage === "design" && stage === "tdd" && setupAutomation.enabled(environmentId) && !setup) {
       setupAutomation.openDesignGate(environmentId);
       await setupAutomation.tick(environmentId);
-    } else if (shouldStart) await startWorkForStage(environmentId, stage, now);
+    } else if (shouldStart) await startWorkForStage(environmentId, stage, now, false, source === "automation");
     bb.realtime.publish("board-changed", { environmentId, stage });
     return { environmentId, stage };
   }
@@ -1222,7 +1224,7 @@ export default async function plugin(bb: BbPluginApi) {
       const check = checks.get(name);
       return !check || (check.status !== "passed" && !nonTaskFailure(check));
     });
-    const failedChecks = evidence.checks.filter(check => !["passed", "skipped"].includes(check.status) && !nonTaskFailure(check));
+    const failedChecks = evidence.checks.filter(check => !["passed", "skipped"].includes(check.status) && !nonTaskFailure(check) && !missingChecks.includes(check.name));
     const waitingForUser = prDelivery(context.task) && evidence.stage !== "design" && onlyNonTaskFailures(context.requiredChecks, evidence);
     const problem = [
       !evidence.decisionsResolved ? "Resolve the required decisions before completion." : "",
@@ -1329,26 +1331,33 @@ export default async function plugin(bb: BbPluginApi) {
 
   // One pass runs at a time. A request during a pass queues one more pass that
   // merges every waiting scope; a full-board request widens it to all cards.
+  // Forced and unforced requests queue apart, so force never reaches a card nobody forced.
   type ReconcileScope = { force: boolean; projectId: string | null; environmentIds: Set<string> | null };
   let recovery: Promise<void> | undefined;
-  let queuedScope: ReconcileScope | null = null;
+  const queuedScopes = new Map<boolean, ReconcileScope>();
+  const takeQueuedScope = () => {
+    const next = queuedScopes.get(true) ?? queuedScopes.get(false) ?? null;
+    if (next) queuedScopes.delete(next.force);
+    return next;
+  };
   function reconcileWorktrees(options: { force?: boolean; projectId?: string | null; environmentId?: string } = {}): Promise<void> {
     if (disposed) return Promise.resolve();
     const scope: ReconcileScope = { force: Boolean(options.force), projectId: options.projectId ?? null,
       environmentIds: options.environmentId ? new Set([options.environmentId]) : null };
     if (recovery) {
-      queuedScope = !queuedScope ? scope : { force: queuedScope.force || scope.force,
-        projectId: queuedScope.projectId === scope.projectId ? scope.projectId : null,
-        environmentIds: queuedScope.environmentIds && scope.environmentIds ? new Set([...queuedScope.environmentIds, ...scope.environmentIds]) : null };
+      const queued = queuedScopes.get(scope.force);
+      queuedScopes.set(scope.force, !queued ? scope : { force: scope.force,
+        projectId: queued.projectId === scope.projectId ? scope.projectId : null,
+        environmentIds: queued.environmentIds && scope.environmentIds ? new Set([...queued.environmentIds, ...scope.environmentIds]) : null });
       return recovery;
     }
     return recovery = (async () => {
       let failure: unknown;
       try {
-        for (let next: ReconcileScope | null = scope; next && !disposed; next = queuedScope, queuedScope = null) {
+        for (let next: ReconcileScope | null = scope; next && !disposed; next = takeQueuedScope()) {
           try { await reconcilePass(next); } catch (error) { failure ??= error; }
         }
-      } finally { recovery = undefined; queuedScope = null; }
+      } finally { recovery = undefined; queuedScopes.clear(); }
       if (failure) throw failure;
     })();
   }
@@ -1522,10 +1531,13 @@ export default async function plugin(bb: BbPluginApi) {
           threadId: retryThreadId, paused: paused(card.environmentId), waitingForInput: card.hasPendingInteraction, hasLiveWork: false }];
       }
       const setupJob = setupAutomation.latest(card.environmentId);
-      const holder = await findDispatchHolder(bb.sdk, listed.filter(thread => thread.environmentId === card.environmentId), setupAutomation.orchestrator(card.environmentId));
+      // Read only when a card can wait; a failed read leaves the saved error in place.
+      const findHolder = () => findDispatchHolder(bb.sdk, listed.filter(thread => thread.environmentId === card.environmentId), setupAutomation.orchestrator(card.environmentId))
+        .catch(() => undefined);
       if (!paused(card.environmentId) && setupJob &&
           (["pending", "starting", "started", "blocked"].includes(setupJob.status) ||
            (setupJob.status === "stale" && setupJob.stage_updated_at === card.stageUpdatedAt))) {
+        const holder = setupJob.status === "blocked" ? undefined : await findHolder();
         if (setupJob.status === "started" && setupJob.thread_id && !setupJob.last_error) {
           const planner = await bb.sdk.threads.get({ threadId: setupJob.thread_id }).catch(() => null);
           if (planner && holdsDispatch(planner) && !card.hasPendingInteraction && !holder &&
@@ -1537,6 +1549,8 @@ export default async function plugin(bb: BbPluginApi) {
       }
       if (paused(card.environmentId) || !launch || launch.status === "paused") return [];
       let status: string = launch.status;
+      // A blocked start does not move when the holder finishes, so keep its saved error.
+      const holder = launch.status === "blocked" ? undefined : await findHolder();
       let error = holder ? dispatchHoldMessage(holder) : launch.last_error;
       if (launch.status === "started") {
         const owner = launch.thread_id ? await bb.sdk.threads.get({ threadId: launch.thread_id }).catch(() => null) : null;
@@ -1968,6 +1982,11 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
+  // A board start that waited for another thread runs when a thread in its worktree goes idle.
+  const heldLaunch = (environmentId: string) => {
+    const state = readWorktreeState.get(environmentId) as WorktreeStateRow | undefined;
+    return Boolean(state && (readStageThreadLaunch.get(environmentId, state.stage, state.updated_at) as StageThreadLaunchRow | undefined)?.status === "pending");
+  };
   const publishThreadChange = ({ thread }: { thread: { id: string } }) => {
     bb.realtime.publish("board-changed", { threadId: thread.id });
   };
@@ -1975,7 +1994,8 @@ export default async function plugin(bb: BbPluginApi) {
   bb.events.on("thread.active", publishThreadChange);
   bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
     publishThreadChange({ thread });
-    if (thread.environmentId && (setupAutomation.enabled(thread.environmentId) || blockedAttempt(thread.environmentId)?.evidence.nextAction)) await reconcileWorktrees({ environmentId: thread.environmentId });
+    if (thread.environmentId && (setupAutomation.enabled(thread.environmentId) || blockedAttempt(thread.environmentId)?.evidence.nextAction ||
+        heldLaunch(thread.environmentId))) await reconcileWorktrees({ environmentId: thread.environmentId });
     if (!lastAssistantText) return;
     const completion = reportedCompletionTransition(lastAssistantText);
     if (!completion) return;

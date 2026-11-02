@@ -218,7 +218,9 @@ limit. Recovery restarts no idle worker that lacks a receipt. Dispatch and
 Same-thread Retry wait for a turn, pending input, queued message, background
 agent, workflow, goal or plan mode on a thread other than the orchestrator.
 Background commands such as dev servers never hold a card, and health names
-the thread that does. A request during a pass runs one more pass after it.
+the thread that does. A held start runs when a thread in its worktree goes
+idle. A user's move or explicit start does not wait. A request during a pass
+runs one more pass after it; a forced request stays apart from unforced ones.
 
 ### Same-thread Retry
 

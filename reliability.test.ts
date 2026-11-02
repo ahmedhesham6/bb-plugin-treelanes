@@ -378,6 +378,23 @@ describe("Board reliability", () => {
     } finally { await harness.lifecycle.dispose(); }
   });
 
+  it.each([
+    { reason: "an unavailable outcome", rows: { "environment-one": { outcome: "unavailable", message: "Git host is unavailable" } }, error: /Git host is unavailable/ },
+    { reason: "a missing row", rows: {}, error: /returned no row/ },
+  ])("names $reason when Done cannot verify a merge and keeps the card in a pass", async ({ rows, error }) => {
+    const thread = worktreeThread({ id: "thread", projectId: "project-one", parentThreadId: null });
+    const { bb, harness } = createFakePluginHost({ pluginId: "treelanes", sdk: sdkFor([thread]) });
+    await plugin(bb);
+    harness.sdk.stub("plugins.callRpc", async () => rows);
+    try {
+      await expect(harness.behavior.callRpc("moveCard", { environmentId: thread.environmentId, stage: "done" })).rejects.toThrow(error);
+      seedWorktreeState(bb, { environmentId: thread.environmentId, stage: "pr", stageUpdatedAt: 100 });
+      await harness.behavior.runSchedule("reconcile-worktrees");
+      const board = await harness.behavior.callRpc("getBoard", { projectId: "project-one" }) as { cards: Array<{ stage: string }> };
+      expect(board.cards[0]?.stage).toBe("pr");
+    } finally { await harness.lifecycle.dispose(); }
+  });
+
   it("does not let an unrelated TDD thread advance the Worktree Stage", async () => {
     const root = worktreeThread({
       id: "thread-tdd-root",

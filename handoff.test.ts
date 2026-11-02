@@ -1617,6 +1617,91 @@ describe("board holds and gates", () => {
     expect(health).toEqual([expect.objectContaining({ status: "pending", error: "Waiting for thread root (Untitled thread) to finish its work." })]);
   });
 
+  it("starts the next worker at once when the user moves the card while another thread has a turn", async () => {
+    const t = await setup();
+    t.root.status = "active";
+    await t.harness.behavior.callRpc("moveCard", { environmentId: "env", stage: "quality" });
+    expect(t.requests).toHaveLength(1);
+  });
+
+  it("starts a held board start when the holding thread goes idle", async () => {
+    const t = await setup();
+    const other = { ...t.root, id: "other", status: "active" as const };
+    t.threads.push(other);
+    await t.submit(await t.receipt());
+    await t.idle();
+    expect(t.stage()).toBe("quality");
+    expect(t.requests).toEqual([]);
+    other.status = "idle";
+    await t.harness.behavior.emitThreadEvent("thread.idle", { thread: other, lastAssistantText: "Done" });
+    expect(t.requests).toHaveLength(1);
+  });
+
+  it("saves the setup plan while the user's thread has a turn and dispatches after it", async () => {
+    const t = await setup(false);
+    await t.harness.behavior.callAgentTool("treelanes_deliver", { stage: "tdd", task: { ...t.task, deliveryTarget: "pr" } }, t.agent);
+    t.root.status = "active";
+    const steps = ["tdd", "pr"].map(stage => ({ id: stage, title: stage, stage, instructions: "Complete and check", checks: ["API regression"],
+      execution: { providerId: "codex", model: "small", reasoningLevel: "low", skills: [], reason: "Bounded work" } }));
+    const saved = JSON.parse(await t.harness.behavior.callAgentTool("treelanes_apply_setup", { setup: { summary: "Short flow", steps } },
+      { ...t.agent, threadId: t.threads[1]!.id }) as string);
+    expect(saved.saved).toBe(true);
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    expect(t.requests).toHaveLength(1);
+    t.root.status = "idle";
+    await t.idle();
+    expect(t.requests).toHaveLength(2);
+  });
+
+  it("keeps a forced resume to its own card when it queues behind a pass", async () => {
+    const t = await setup();
+    await t.harness.behavior.setSettings({ autoAdvanceImplementation: false });
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    const db = t.bb.storage.database();
+    for (const [id, environmentId] of [["worker-a", "env"], ["worker-b", "env-b"]] as const) {
+      t.threads.push({ ...t.root, id, environmentId, status: "error" });
+    }
+    db.prepare("UPDATE worktree_cards SET owner_thread_id = 'worker-a' WHERE environment_id = 'env'").run();
+    db.prepare("INSERT INTO worktree_cards (environment_id, stage, note, updated_at, owner_thread_id) VALUES ('env-b', 'tdd', NULL, 100, 'worker-b')").run();
+    let reached!: () => void; let release!: () => void;
+    const atGate = new Promise<void>(resolve => { reached = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let first = true;
+    t.harness.sdk.stub("threads.queuedMessages.list", async () => {
+      if (first) { first = false; reached(); await gate; }
+      return [];
+    });
+    const pass = t.harness.behavior.runSchedule("reconcile-worktrees");
+    await atGate;
+    const queued = [t.harness.behavior.runCli(["resume", "env-b"]), t.harness.behavior.runSchedule("reconcile-worktrees")];
+    await new Promise(resolve => setTimeout(resolve, 0));
+    release();
+    await Promise.all([pass, ...queued]);
+    expect(t.retries.map(retry => retry.threadId)).toEqual(["worker-b"]);
+  });
+
+  it("lets the user's own thread remove a task-wide check", async () => {
+    const t = await setup();
+    await t.harness.behavior.callAgentTool("treelanes_set_task", { ...t.task, requiredChecks: ["API regression", "Final gate"] }, t.agent);
+    await t.harness.behavior.callAgentTool("treelanes_set_task", t.task, t.agent);
+    expect((await t.context()).task.requiredChecks).toEqual(["API regression"]);
+  });
+
+  it("keeps health available when a queued-message read fails", async () => {
+    const t = await appliedSetup();
+    t.harness.sdk.stub("threads.queuedMessages.list", async () => { throw new Error("Thread store is unavailable"); });
+    const health = JSON.parse((await t.harness.behavior.runCli(["health", "project"])).stdout!);
+    expect(health).toEqual([expect.objectContaining({ status: "pending" })]);
+  });
+
+  it("names a waiting thread only while the start can still run", async () => {
+    const t = await appliedSetup();
+    t.root.status = "active";
+    t.bb.storage.database().prepare("UPDATE worktree_stage_thread_launches SET status = 'blocked', last_error = 'Spawn rejected the model'").run();
+    const health = JSON.parse((await t.harness.behavior.runCli(["health", "project"])).stdout!);
+    expect(health).toEqual([expect.objectContaining({ status: "blocked", error: "Spawn rejected the model" })]);
+  });
+
   it("runs a recovery request that arrives during a running pass", async () => {
     const t = await appliedSetup();
     let reached!: () => void; let release!: () => void;
