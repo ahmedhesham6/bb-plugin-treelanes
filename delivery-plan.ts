@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { SetupPlan } from "./setup-plan";
 
 const stages = ["tdd", "quality", "simplify", "pr"] as const;
 const checkStages = ["design", "tdd", "quality", "simplify"] as const;
@@ -20,6 +21,7 @@ type TaskPlan = {
   requiredChecks: string[];
   deliveryStages?: z.infer<typeof deliveryStagesSchema>;
   stageChecks?: z.infer<typeof stageChecksSchema>;
+  setup?: SetupPlan;
 };
 
 export function nextDeliveryStage(stage: string, task: TaskPlan | null) {
@@ -29,8 +31,12 @@ export function nextDeliveryStage(stage: string, task: TaskPlan | null) {
   return index < 0 ? null : plan[index + 1] ?? null;
 }
 
-export function requiredStageChecks(stage: string, task: TaskPlan | null): string[] {
+export function requiredStageChecks(stage: string, task: TaskPlan | null, stepId?: string | null): string[] {
   const local = checkStages.includes(stage as typeof checkStages[number])
     ? task?.stageChecks?.[stage as typeof checkStages[number]] ?? [] : [];
-  return [...new Set([...(task?.requiredChecks ?? []), ...local])];
+  if (stage === "design") return local;
+  const step = task?.setup?.steps.find(item => item.id === stepId);
+  const final = task?.setup?.steps.filter(item => item.stage !== "pr").at(-1);
+  const common = !step || step.id === final?.id ? task?.requiredChecks ?? [] : [];
+  return [...new Set([...common, ...local, ...(step?.checks ?? [])])];
 }

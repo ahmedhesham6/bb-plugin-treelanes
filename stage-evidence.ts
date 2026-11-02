@@ -12,7 +12,7 @@ const MAX_CHANGED_FILES = 256;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_DIFF_BYTES = 8 * 1024 * 1024;
-const FILE_READ_CONCURRENCY = 4;
+const FILE_READ_CONCURRENCY = 8;
 
 const boundedText = z.string().trim().min(1).max(MAX_TEXT_LENGTH);
 const boundedList = z
@@ -160,6 +160,13 @@ function assertAvailable<T extends { outcome: string }>(
     return unavailable(`${label} is ${result.outcome}`);
   }
   return result as Extract<T, { outcome: "available" }>;
+}
+
+// The bb--git plugin serves workspace status and diffs; a failed call fails the read.
+function git<T>(sdk: Sdk, method: "workspaceStatus" | "diff", input: {
+  environmentId: string; mergeBaseBranch?: string; target?: { type: DiffTarget; mergeBaseBranch?: string };
+}) {
+  return sdk.plugins.callRpc({ pluginId: "bb--git", method, input, outputSchema: z.custom<T>() });
 }
 
 async function readSdk<T>(label: string, operation: () => Promise<T>): Promise<T> {
@@ -500,7 +507,7 @@ async function captureSnapshot(
     "merge base branch",
   );
   const statusResult = await readSdk("workspace status", () =>
-    sdk.environments.status({ environmentId, mergeBaseBranch }),
+    git<Awaited<ReturnType<Sdk["environments"]["status"]>>>(sdk, "workspaceStatus", { environmentId, mergeBaseBranch }),
   );
   const status = assertAvailable(statusResult, "workspace status");
   const workspace = status.workspace;
@@ -535,21 +542,13 @@ async function captureSnapshot(
     branchDiffFilesResult,
   ] = await Promise.all([
       readSdk("committed branch diff", () =>
-        sdk.environments.diff({
-          environmentId,
-          target: "branch_committed",
-          mergeBaseBranch,
-        }),
+        git<DiffResponse>(sdk, "diff", { environmentId, target: { type: "branch_committed", mergeBaseBranch } }),
       ),
       readSdk("uncommitted diff", () =>
-        sdk.environments.diff({ environmentId, target: "uncommitted" }),
+        git<DiffResponse>(sdk, "diff", { environmentId, target: { type: "uncommitted" } }),
       ),
       readSdk("combined workspace diff", () =>
-        sdk.environments.diff({
-          environmentId,
-          target: "all",
-          mergeBaseBranch,
-        }),
+        git<DiffResponse>(sdk, "diff", { environmentId, target: { type: "all", mergeBaseBranch } }),
       ),
       readSdk("changed-file list", () =>
         sdk.environments.diffFiles({
@@ -684,69 +683,24 @@ async function frameFileContents(
         if (sides === undefined) {
           unavailable(`changed path has no presence metadata: ${relativePath}`);
         }
-        const baseBytes = sides.base
-          ? decodeContent(
-              await readSdk(`base file ${relativePath}`, () =>
-                sdk.environments.diffFile({
-                  environmentId,
-                  target: "all",
-                  mergeBaseRef: baseRef,
-                  path: relativePath,
-                  side: "old",
-                }),
-              ),
-              `base file ${relativePath}`,
-            )
-          : new Uint8Array(0);
-        const headBytes = sides.head
-          ? decodeContent(
-              await readSdk(`HEAD file ${relativePath}`, () =>
-                sdk.environments.diffFile({
-                  environmentId,
-                  target: "branch_committed",
-                  mergeBaseRef: baseRef,
-                  path: relativePath,
-                  side: "new",
-                }),
-              ),
-              `HEAD file ${relativePath}`,
-            )
-          : new Uint8Array(0);
-        let worktreeBytes: Uint8Array = new Uint8Array(0);
-        if (sides.worktree) {
-          const diffWorktreeResult = await readSdk(
-            `diff worktree file ${relativePath}`,
-            () =>
-              sdk.environments.diffFile({
-                environmentId,
-                target: "all",
-                mergeBaseRef: baseRef,
-                path: relativePath,
-                side: "new",
-              }),
-          );
-          const diffWorktreeBytes = decodeContent(
-            diffWorktreeResult,
-            `diff worktree file ${relativePath}`,
-          );
-          const currentResult = await readSdk(
-            `current file ${relativePath}`,
-            () =>
-              sdk.files.read({
-                hostId,
-                path: workspacePath(rootPath, relativePath),
-                rootPath,
-              }),
-          );
-          worktreeBytes = decodeContent(
-            currentResult,
-            `current file ${relativePath}`,
-          );
-          if (Buffer.compare(diffWorktreeBytes, worktreeBytes) !== 0) {
-            unavailable(
-              `current file ${relativePath} changed while it was captured`,
-            );
-          }
+        const side = (label: string, target: "all" | "branch_committed", fileSide: "old" | "new") =>
+          readSdk(`${label} ${relativePath}`, () =>
+            sdk.environments.diffFile({ environmentId, target, mergeBaseRef: baseRef, path: relativePath, side: fileSide }))
+            .then((result) => decodeContent(result, `${label} ${relativePath}`));
+        const empty = Promise.resolve(new Uint8Array(0));
+        // The four reads of one file are independent; run them together.
+        const [baseBytes, headBytes, diffWorktreeBytes, worktreeBytes] = await Promise.all([
+          sides.base ? side("base file", "all", "old") : empty,
+          sides.head ? side("HEAD file", "branch_committed", "new") : empty,
+          sides.worktree ? side("diff worktree file", "all", "new") : empty,
+          sides.worktree
+            ? readSdk(`current file ${relativePath}`, () =>
+                sdk.files.read({ hostId, path: workspacePath(rootPath, relativePath), rootPath }))
+                .then((result) => decodeContent(result, `current file ${relativePath}`))
+            : empty,
+        ]);
+        if (Buffer.compare(diffWorktreeBytes, worktreeBytes) !== 0) {
+          unavailable(`current file ${relativePath} changed while it was captured`);
         }
         return { relativePath, baseBytes, headBytes, worktreeBytes };
       }),

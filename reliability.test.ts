@@ -147,8 +147,6 @@ function sdkFor(
     environments: {
       get: async ({ environmentId }: { environmentId: string }) =>
         options.environments?.[environmentId] ?? environment(environmentId),
-      pullRequest: async ({ environmentId }: { environmentId: string }) =>
-        options.pullRequests?.[environmentId] ?? { outcome: "absent" as const },
     },
     projects: {
       list: async () => [
@@ -157,7 +155,11 @@ function sdkFor(
       ],
     },
     plugins: {
-      callRpc: async () => ({ rows: [] }),
+      callRpc: async ({ pluginId, method, input }: { pluginId: string; method: string; input?: unknown }) => {
+        if (pluginId !== "bb--github-pr-status" || method !== "pullRequests") return { rows: [] };
+        return Object.fromEntries((input as { keys: string[] }).keys.map((key) =>
+          [key, options.pullRequests?.[key] ?? { outcome: "absent" as const }]));
+      },
     },
   };
 }
@@ -221,6 +223,13 @@ function seedLaunch(
     );
 }
 
+function pullRequestReads(harness: ReturnType<typeof createFakePluginHost>["harness"]) {
+  return harness.sdk.callsTo("plugins.callRpc")
+    .map(([args]) => args as { pluginId: string; method: string; input: { keys: string[] } })
+    .filter((args) => args.pluginId === "bb--github-pr-status" && args.method === "pullRequests")
+    .map((args) => args.input.keys);
+}
+
 describe("Board reliability", () => {
   it.each([
     {
@@ -263,7 +272,7 @@ describe("Board reliability", () => {
         stage: "done",
       }),
     ).rejects.toThrow(/verified merged pull request/i);
-    expect(harness.sdk.callsTo("environments.pullRequest")).toHaveLength(1);
+    expect(pullRequestReads(harness)).toEqual([[worktree.environmentId]]);
 
     await harness.lifecycle.dispose();
   });
@@ -299,6 +308,91 @@ describe("Board reliability", () => {
     expect(board.cards[0]?.stage).toBe("done");
 
     await harness.lifecycle.dispose();
+  });
+
+  it("moves merged PR Watch cards to Done with one pull request read per pass", async () => {
+    const merged = worktreeThread({ id: "thread-merged", projectId: "project-one", title: "Merged", parentThreadId: null });
+    const waiting = worktreeThread({ id: "thread-waiting", projectId: "project-one", title: "Host down", parentThreadId: null,
+      environmentId: "environment-two", environmentBranchName: "feat/two" });
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "treelanes",
+      sdk: sdkFor([merged, waiting], {
+        environments: { "environment-two": environment("environment-two", "project-one", "feat/two") },
+        pullRequests: {
+          [merged.environmentId]: availablePullRequest("merged", "feat/board"),
+          [waiting.environmentId]: { outcome: "unavailable" as const, message: "Git host is unavailable" },
+        },
+      }),
+    });
+    await plugin(bb);
+    for (const environmentId of [merged.environmentId, waiting.environmentId]) {
+      seedWorktreeState(bb, { environmentId, stage: "pr", stageUpdatedAt: 100 });
+    }
+
+    await harness.behavior.runSchedule("reconcile-worktrees");
+
+    const board = (await harness.behavior.callRpc("getBoard", { projectId: "project-one" })) as {
+      cards: Array<{ environmentId: string; stage: string }>;
+    };
+    expect(Object.fromEntries(board.cards.map((card) => [card.environmentId, card.stage]))).toEqual({
+      [merged.environmentId]: "done",
+      [waiting.environmentId]: "pr",
+    });
+    expect(pullRequestReads(harness).map((keys) => [...keys].sort())).toEqual([[merged.environmentId, waiting.environmentId].sort()]);
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("keeps other pull request batches when one batch fails", async () => {
+    const threads = Array.from({ length: 201 }, (_, index) => worktreeThread({
+      id: `thread-${index}`, environmentId: `env-${index}`, projectId: "project-one", parentThreadId: null,
+    }));
+    const { bb, harness } = createFakePluginHost({ pluginId: "treelanes", sdk: sdkFor(threads) });
+    await plugin(bb);
+    harness.sdk.stub("threads.list", async ({ offset = 0, limit = 100 }) => threads.slice(offset, offset + limit));
+    harness.sdk.stub("plugins.callRpc", async ({ input }) => {
+      const { keys } = input as { keys: string[] };
+      if (keys.length === 200) throw new Error("First batch is unavailable");
+      return Object.fromEntries(keys.map(key => [key, availablePullRequest("merged")]));
+    });
+    for (const thread of threads) seedWorktreeState(bb, { environmentId: thread.environmentId, stage: "pr", stageUpdatedAt: 100 });
+    try {
+      await harness.behavior.runSchedule("reconcile-worktrees");
+      const board = await harness.behavior.callRpc("getBoard", { projectId: "project-one" }) as {
+        cards: Array<{ environmentId: string; stage: string }>;
+      };
+      expect(board.cards.filter(card => card.stage === "pr")).toHaveLength(200);
+      expect(board.cards.filter(card => card.stage === "done")).toHaveLength(1);
+      expect(pullRequestReads(harness).map(keys => keys.length)).toEqual([200, 1]);
+    } finally { await harness.lifecycle.dispose(); }
+  });
+
+  it("names the pull request RPC failure when Done cannot verify a merge", async () => {
+    const thread = worktreeThread({ id: "thread", projectId: "project-one", parentThreadId: null });
+    const { bb, harness } = createFakePluginHost({ pluginId: "treelanes", sdk: sdkFor([thread]) });
+    await plugin(bb);
+    harness.sdk.stub("plugins.callRpc", async () => { throw new Error("bb--github-pr-status is not installed"); });
+    try {
+      await expect(harness.behavior.callRpc("moveCard", { environmentId: thread.environmentId, stage: "done" }))
+        .rejects.toThrow(/bb--github-pr-status is not installed/);
+    } finally { await harness.lifecycle.dispose(); }
+  });
+
+  it.each([
+    { reason: "an unavailable outcome", rows: { "environment-one": { outcome: "unavailable", message: "Git host is unavailable" } }, error: /Git host is unavailable/ },
+    { reason: "a missing row", rows: {}, error: /returned no row/ },
+  ])("names $reason when Done cannot verify a merge and keeps the card in a pass", async ({ rows, error }) => {
+    const thread = worktreeThread({ id: "thread", projectId: "project-one", parentThreadId: null });
+    const { bb, harness } = createFakePluginHost({ pluginId: "treelanes", sdk: sdkFor([thread]) });
+    await plugin(bb);
+    harness.sdk.stub("plugins.callRpc", async () => rows);
+    try {
+      await expect(harness.behavior.callRpc("moveCard", { environmentId: thread.environmentId, stage: "done" })).rejects.toThrow(error);
+      seedWorktreeState(bb, { environmentId: thread.environmentId, stage: "pr", stageUpdatedAt: 100 });
+      await harness.behavior.runSchedule("reconcile-worktrees");
+      const board = await harness.behavior.callRpc("getBoard", { projectId: "project-one" }) as { cards: Array<{ stage: string }> };
+      expect(board.cards[0]?.stage).toBe("pr");
+    } finally { await harness.lifecycle.dispose(); }
   });
 
   it("does not let an unrelated TDD thread advance the Worktree Stage", async () => {

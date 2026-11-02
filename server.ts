@@ -11,6 +11,7 @@ import { resolveStepExecution } from "./step-execution";
 import { noInput } from "./rpc-input";
 import { validateKindSteps } from "./task-kinds";
 import { createSetupAutomation, setupAutomationMigration } from "./setup-automation";
+import { dispatchHoldMessage, findDispatchHolder, holdsDispatch } from "./dispatch";
 import { createThreadRetry, threadRetryMigration } from "./thread-retry";
 import { createStageContinuation, stageContinuationMigration } from "./stage-continuation";
 import { createTddRepair, tddRepairMigration } from "./tdd-repair";
@@ -219,19 +220,17 @@ function displayTitle(thread: ThreadRow): string {
 function hasLiveWork(
   thread: Pick<ThreadRow, "status" | "activity">,
 ): boolean {
-  const activity = thread.activity;
-  return (
-    thread.status === "active" ||
-    thread.status === "pending" ||
-    thread.status === "starting" ||
-    thread.status === "stopping" ||
-    (activity?.activeWorkflowCount ?? 0) > 0 ||
-    (activity?.activeBackgroundAgentCount ?? 0) > 0 ||
-    (activity?.activeBackgroundCommandCount ?? 0) > 0 ||
-    (activity?.activePlanModeCount ?? 0) > 0 ||
-    (activity?.activeGoalCount ?? 0) > 0
-  );
+  return holdsDispatch(thread) || (thread.activity?.activeBackgroundCommandCount ?? 0) > 0;
 }
+
+const pullRequestRowSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("available"), pullRequest: z.object({
+    state: z.enum(["draft", "open", "merged", "closed"]), headRefName: z.string(),
+  }).passthrough() }),
+  z.object({ outcome: z.literal("absent") }),
+  z.object({ outcome: z.literal("unavailable"), message: z.string() }),
+]);
+type PullRequestRow = z.infer<typeof pullRequestRowSchema>;
 
 function worktreeStatus(threads: ThreadRow[]): ThreadRow["status"] {
   if (threads.some((thread) => thread.status === "error")) return "error";
@@ -484,7 +483,6 @@ export default async function plugin(bb: BbPluginApi) {
       addWorktreeHistory.run(request.environment_id, state.stage, request.kind === "initial" ? "Automatic setup accepted" : "Bounded plan recovery accepted", "automation", version);
     },
     listThreads: projectId => listThreads(projectId),
-    hasLiveWork,
     retryThread: threadRetry.retry,
     disposed: () => disposed,
   });
@@ -557,11 +555,12 @@ export default async function plugin(bb: BbPluginApi) {
     prompt: string,
     stage?: StageId,
     stageUpdatedAt?: number,
+    listed?: ThreadRow[],
   ) {
     const environment = await bb.sdk.environments.get({ environmentId });
     const usableParent = (thread: { environmentId?: string | null; projectId: string; archivedAt?: number | null; deletedAt?: number | null } | null | undefined) =>
       Boolean(thread && thread.environmentId === environmentId && thread.projectId === environment.projectId && !thread.archivedAt && !thread.deletedAt);
-    const threads = (await listThreads(environment.projectId))
+    const threads = (listed ?? await listThreads(environment.projectId))
       .filter(usableParent)
       .sort((a, b) => b.updatedAt - a.updatedAt);
     const sourceThread = threads[0];
@@ -680,7 +679,7 @@ export default async function plugin(bb: BbPluginApi) {
       if (!launch.thread_id) continue;
       try {
         const thread = await bb.sdk.threads.get({ threadId: launch.thread_id });
-        if (thread.environmentId === environmentId && hasLiveWork(thread)) {
+        if (thread.environmentId === environmentId && holdsDispatch(thread)) {
           return thread;
         }
       } catch {
@@ -693,7 +692,8 @@ export default async function plugin(bb: BbPluginApi) {
   async function launchStageThreadOnce(
     environmentId: string, stage: StageId, stageUpdatedAt: number,
     prompt: string,
-    explicit = false,
+    explicit: boolean,
+    open: ThreadRow[],
   ) {
     if (disposed || paused(environmentId)) return null;
     const current = readWorktreeState.get(environmentId) as WorktreeStateRow | undefined;
@@ -701,8 +701,10 @@ export default async function plugin(bb: BbPluginApi) {
     const startKey = `${environmentId}:${stage}`;
     const inFlight = stageThreadStarts.get(startKey);
     if (inFlight) return inFlight;
+    let earlierAttempt = false;
     const claimed = db.transaction(() => {
       const row = readStageThreadLaunch.get(environmentId, stage, stageUpdatedAt) as StageThreadLaunchRow | undefined;
+      earlierAttempt = Boolean(row?.attempt_count);
       if (row?.status === "started" || row?.status === "starting" || row?.status === "paused") return false;
       if (row && (row.status === "blocked" || row.attempt_count >= 3)) return false;
       if (!explicit && row && row.next_attempt_at > Date.now()) return false;
@@ -720,10 +722,11 @@ export default async function plugin(bb: BbPluginApi) {
     if (!claimed) return null;
     const start = (async () => {
       const environment = await bb.sdk.environments.get({ environmentId });
-      const candidates = [...await listThreads(environment.projectId), ...await listThreads(environment.projectId, true)];
-      const orphan = candidates.find(thread => thread.environmentId === environmentId && thread.title === launchTitle(environmentId, stage, stageUpdatedAt));
+      // Only an earlier attempt can leave an orphan worker, which may since be archived.
+      const matchesLaunch = (thread: ThreadRow) => thread.environmentId === environmentId && thread.title === launchTitle(environmentId, stage, stageUpdatedAt);
+      const orphan = open.find(matchesLaunch) ?? (earlierAttempt ? (await listThreads(environment.projectId, true)).find(matchesLaunch) : undefined);
       const liveWorker = orphan ?? await findLiveStageWorker(environmentId, stage);
-      const thread = liveWorker ?? await startStageThread(environmentId, prompt, stage, stageUpdatedAt);
+      const thread = liveWorker ?? await startStageThread(environmentId, prompt, stage, stageUpdatedAt, open);
       saveStageThreadLaunch.run(environmentId, stage, stageUpdatedAt, "started", thread.id);
       setOwner.run(thread.id, environmentId, stageUpdatedAt);
       return thread;
@@ -739,27 +742,25 @@ export default async function plugin(bb: BbPluginApi) {
     stage: StageId,
     stageUpdatedAt: number,
     explicit = false,
+    // Board dispatch waits for other threads; a user's start or move does not.
+    waitForThreads = !explicit,
   ) {
     if (setupAutomation.pending(environmentId)) return null;
     if (blockedAttempt(environmentId)) throw new Error("Recorded checks are blocked; do not restart the same stage. Read context for the evidence.");
     const config = await settings.get();
-    if (stage === "tdd") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.tddPrompt, explicit);
-    }
-    if (stage === "quality") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.reviewPrompt, explicit);
-    }
-    if (stage === "simplify") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.simplifyPrompt, explicit);
-    }
+    const prompts: Partial<Record<StageId, string>> = {
+      tdd: config.tddPrompt, quality: config.reviewPrompt, simplify: config.simplifyPrompt, pr: config.prPrompt,
+    };
+    const prompt = prompts[stage];
+    if (prompt === undefined) return null;
     if (stage === "pr" && config.simplifyToPrMode === "ask" && !explicit) {
       addPendingStageThreadLaunch.run(environmentId, stage, stageUpdatedAt);
       return null;
     }
-    if (stage === "pr") {
-      return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, config.prPrompt, explicit);
-    }
-    return null;
+    const environment = await bb.sdk.environments.get({ environmentId });
+    const open = await listThreads(environment.projectId);
+    if (waitForThreads && await findDispatchHolder(bb.sdk, open.filter(thread => thread.environmentId === environmentId), setupAutomation.orchestrator(environmentId))) return null;
+    return launchStageThreadOnce(environmentId, stage, stageUpdatedAt, prompt, explicit, open);
   }
 
   async function moveWorktree(
@@ -768,6 +769,7 @@ export default async function plugin(bb: BbPluginApi) {
     note: string | undefined,
     source: "agent" | "automation" | "cli" | "panel",
     nextStepId?: string,
+    pullRequest?: PullRequestRow,
   ) {
     const old = readWorktreeState.get(environmentId) as
       | WorktreeStateRow
@@ -777,7 +779,7 @@ export default async function plugin(bb: BbPluginApi) {
       const liveWorker = await findLiveStageWorker(environmentId, old.stage as StageId);
       if (liveWorker) throw new Error("A stage worker is still running. Stop it before changing its stage.");
     }
-    const mergedPr = stage === "done" ? await requireMergedPullRequest(environmentId) : null;
+    const mergedPr = stage === "done" ? await requireMergedPullRequest(environmentId, pullRequest) : null;
     const setup = taskFor(environmentId).task?.setup;
     if (setup && old && stage !== old.stage && stage !== "done" && !nextStepId) {
       if (old.stage === "design" && setup.steps[0]!.stage === stage) nextStepId = setup.steps[0]!.id;
@@ -818,7 +820,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (old?.stage === "design" && stage === "tdd" && setupAutomation.enabled(environmentId) && !setup) {
       setupAutomation.openDesignGate(environmentId);
       await setupAutomation.tick(environmentId);
-    } else if (shouldStart) await startWorkForStage(environmentId, stage, now);
+    } else if (shouldStart) await startWorkForStage(environmentId, stage, now, false, source === "automation");
     bb.realtime.publish("board-changed", { environmentId, stage });
     return { environmentId, stage };
   }
@@ -904,10 +906,29 @@ export default async function plugin(bb: BbPluginApi) {
     };
   }
 
-  async function requireMergedPullRequest(environmentId: string) {
+  async function readPullRequests(environmentIds: string[]) {
+    const rows: Record<string, PullRequestRow | undefined> = {};
+    for (let start = 0; start < environmentIds.length; start += 200) {
+      const keys = environmentIds.slice(start, start + 200);
+      try {
+        Object.assign(rows, await bb.sdk.plugins.callRpc({ pluginId: "bb--github-pr-status", method: "pullRequests",
+          input: { keys }, outputSchema: z.record(z.string(), pullRequestRowSchema) }));
+      } catch (error) {
+        const message = `The bb--github-pr-status read failed: ${error instanceof Error ? error.message : String(error)}`;
+        bb.log.error(message);
+        for (const key of keys) rows[key] = { outcome: "unavailable", message };
+      }
+    }
+    return rows;
+  }
+
+  async function requireMergedPullRequest(environmentId: string, row?: PullRequestRow) {
     const [environment, result] = await Promise.all([
-      bb.sdk.environments.get({ environmentId }), bb.sdk.environments.pullRequest({ environmentId }),
+      bb.sdk.environments.get({ environmentId }),
+      row ?? readPullRequests([environmentId]).then(rows => rows[environmentId]),
     ]);
+    if (!result) throw new Error("Done requires a verified merged pull request. bb--github-pr-status returned no row for this worktree.");
+    if (result.outcome === "unavailable") throw new Error(`Done requires a verified merged pull request. Pull request status is unavailable: ${result.message}`);
     if (result.outcome !== "available" || result.pullRequest.state !== "merged" ||
         !environment.branchName || result.pullRequest.headRefName !== environment.branchName) {
       throw new Error("Done requires a verified merged pull request for this worktree branch.");
@@ -917,11 +938,6 @@ export default async function plugin(bb: BbPluginApi) {
 
   function prDelivery(task: TaskContext | null | undefined) {
     return task?.deliveryTarget === "pr" || task?.setup?.steps.at(-1)?.stage === "pr";
-  }
-
-  function completionChecks(state: WorktreeStateRow, task: TaskContext | null) {
-    return state.stage === "design" ? task?.stageChecks?.design ?? []
-      : [...new Set([...requiredStageChecks(state.stage, task), ...(activeSetupStep(task?.setup, state.active_step_id)?.checks ?? [])])];
   }
 
   function blockedAttempt(environmentId: string) {
@@ -934,7 +950,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (row.stage_updated_at !== state?.updated_at || row.task_revision !== saved.revision ||
         row.thread_id !== state.owner_thread_id) return null;
     const evidence = completionEvidenceSchema.parse(JSON.parse(row.evidence_json));
-    const waitingForUser = state.stage !== "design" && prDelivery(saved.task) && onlyNonTaskFailures(completionChecks(state, saved.task), evidence);
+    const waitingForUser = state.stage !== "design" && prDelivery(saved.task) && onlyNonTaskFailures(requiredStageChecks(state.stage, saved.task, state.active_step_id), evidence);
     return { reason: row.reason, recordedAt: row.recorded_at, evidence, waitingForUser };
   }
 
@@ -977,7 +993,7 @@ export default async function plugin(bb: BbPluginApi) {
       blockedAttempt: blockedAttempt(environmentId),
       activeStep, nextStep, setupComplete: Boolean(db.prepare("SELECT 1 FROM worktree_setup_outcomes WHERE environment_id = ? AND task_revision = ?").get(environmentId, saved.revision)), completedStepIds: saved.task?.setup?.steps.slice(0, Math.max(0, saved.task.setup.steps.findIndex(step => step.id === state.active_step_id))).map(step => step.id) ?? [],
       execution: executionRow?.execution_json ? JSON.parse(executionRow.execution_json) : null,
-      requiredChecks: completionChecks(state, saved.task),
+      requiredChecks: requiredStageChecks(state.stage, saved.task, state.active_step_id),
       nextStage: saved.task?.setup ? nextStep?.stage ?? null : nextDeliveryStage(state.stage, saved.task),
       paused: paused(environmentId),
       ...(snapshot ? { workspaceDigest: await captureWorkspace(bb.sdk, environmentId) } : {}) };
@@ -993,6 +1009,12 @@ export default async function plugin(bb: BbPluginApi) {
       throw new Error("Keep the current stage in the delivery plan. Complete it before continuing.");
     }
     const current = taskFor(context.environmentId);
+    // A board-dispatched stage worker cannot loosen its own gate; the orchestrator and the user's thread can.
+    if (current.task?.requiredChecks.some(check => !task.requiredChecks.includes(check)) &&
+        threadId !== setupAutomation.orchestrator(context.environmentId) &&
+        db.prepare("SELECT 1 FROM worktree_stage_thread_launches WHERE environment_id = ? AND thread_id = ?").get(context.environmentId, threadId)) {
+      throw new Error("Only the orchestrator can remove a required check. Keep every saved requiredChecks entry.");
+    }
     if (current.task?.deliveryTarget === "pr" && task.deliveryTarget && task.deliveryTarget !== "pr") throw new Error("Keep PR Watch as the delivery target. Pause the task if its authority changed.");
     task.deliveryTarget ??= current.task?.deliveryTarget;
     requirePrWatch(task);
@@ -1013,7 +1035,7 @@ export default async function plugin(bb: BbPluginApi) {
     const correctedSelection = launch && ["failed", "blocked"].includes(launch.status) && !prepared?.execution_json &&
       JSON.stringify(activeSetupStep(current.task?.setup, state.active_step_id)?.execution) !== JSON.stringify(activeSetupStep(task.setup, state.active_step_id)?.execution);
     for (const step of task.setup?.steps ?? []) {
-      if (new Set([...requiredStageChecks(step.stage, task), ...step.checks]).size > 128) throw new Error("A step can require at most 128 distinct checks.");
+      if (requiredStageChecks(step.stage, task, step.id).length > 128) throw new Error("A step can require at most 128 distinct checks.");
     }
     if (JSON.stringify(current.task) === JSON.stringify(task)) return { taskRevision: current.revision, task };
     const revision = current.revision + 1;
@@ -1202,14 +1224,16 @@ export default async function plugin(bb: BbPluginApi) {
       const check = checks.get(name);
       return !check || (check.status !== "passed" && !nonTaskFailure(check));
     });
+    const failedChecks = evidence.checks.filter(check => !["passed", "skipped"].includes(check.status) && !nonTaskFailure(check) && !missingChecks.includes(check.name));
     const waitingForUser = prDelivery(context.task) && evidence.stage !== "design" && onlyNonTaskFailures(context.requiredChecks, evidence);
-    const problem = !evidence.decisionsResolved ? "Resolve the required decisions before completion."
-      : evidence.openFindings.length ? `Resolve the required findings before completion: ${evidence.openFindings.join("; ")}`
-      : missingChecks.length ? `Required check has not passed: ${missingChecks.join("; ")}`
-      : waitingForUser ? "No required check passed. Every required check failed for base or environment reasons."
-      : evidence.checks.some(check => !["passed", "skipped"].includes(check.status) && !nonTaskFailure(check)) ||
-        (evidence.stage !== "design" && !evidence.checks.some(check => check.status === "passed"))
-        ? "Implementation needs passing check evidence. Optional skipped checks need a reason." : null;
+    const problem = [
+      !evidence.decisionsResolved ? "Resolve the required decisions before completion." : "",
+      evidence.openFindings.length ? `Resolve the required findings before completion: ${evidence.openFindings.join("; ")}` : "",
+      missingChecks.length ? `Required check has not passed: ${missingChecks.join("; ")}` : "",
+      failedChecks.length ? `Failed checks: ${failedChecks.map(check => check.name).join("; ")}` : "",
+    ].filter(Boolean).join(" ") || (waitingForUser ? "No required check passed. Every required check failed for base or environment reasons."
+      : (evidence.stage !== "design" && !evidence.checks.some(check => check.status === "passed"))
+        ? "Implementation needs passing check evidence. Optional skipped checks need a reason." : null);
     // Re-read after the host snapshot before saving either success or a blocker.
     const state = readWorktreeState.get(context.environmentId) as WorktreeStateRow;
     if (state.updated_at !== context.stageUpdatedAt || state.owner_thread_id !== threadId ||
@@ -1287,7 +1311,7 @@ export default async function plugin(bb: BbPluginApi) {
       const config = await settings.get();
       if (state.stage === "design" ? !config.autoAdvanceGrilling : !config.autoAdvanceImplementation) return;
       const worker = await bb.sdk.threads.get({ threadId });
-      if (hasLiveWork(worker) || (await bb.sdk.threads.interactions.list({ threadId })).length) return;
+      if (holdsDispatch(worker) || (await bb.sdk.threads.interactions.list({ threadId })).length) return;
       if ((await bb.sdk.threads.queuedMessages.list({ threadId })).length) return;
       if (await captureWorkspace(bb.sdk, environmentId) !== evidence.workspaceDigest) {
         recordProblem("Files changed after completion evidence was recorded. Rerun the required checks."); return;
@@ -1305,140 +1329,165 @@ export default async function plugin(bb: BbPluginApi) {
     } finally { completing.delete(environmentId); }
   }
 
+  // One pass runs at a time. A request during a pass queues one more pass that
+  // merges every waiting scope; a full-board request widens it to all cards.
+  // Forced and unforced requests queue apart, so force never reaches a card nobody forced.
+  type ReconcileScope = { force: boolean; projectId: string | null; environmentIds: Set<string> | null };
   let recovery: Promise<void> | undefined;
-  async function reconcileWorktrees(options: { force?: boolean; projectId?: string | null; environmentId?: string } = {}) {
-    if (disposed) return;
+  const queuedScopes = new Map<boolean, ReconcileScope>();
+  const takeQueuedScope = () => {
+    const next = queuedScopes.get(true) ?? queuedScopes.get(false) ?? null;
+    if (next) queuedScopes.delete(next.force);
+    return next;
+  };
+  function reconcileWorktrees(options: { force?: boolean; projectId?: string | null; environmentId?: string } = {}): Promise<void> {
+    if (disposed) return Promise.resolve();
+    const scope: ReconcileScope = { force: Boolean(options.force), projectId: options.projectId ?? null,
+      environmentIds: options.environmentId ? new Set([options.environmentId]) : null };
     if (recovery) {
-      await recovery;
-      if (options.force) return reconcileWorktrees(options);
-      return;
+      const queued = queuedScopes.get(scope.force);
+      queuedScopes.set(scope.force, !queued ? scope : { force: scope.force,
+        projectId: queued.projectId === scope.projectId ? scope.projectId : null,
+        environmentIds: queued.environmentIds && scope.environmentIds ? new Set([...queued.environmentIds, ...scope.environmentIds]) : null });
+      return recovery;
     }
-    recovery = (async () => {
-      if (options.environmentId) await setupAutomation.tick(options.environmentId, options.force);
-      else await setupAutomation.tickAll(options.force);
-      const board = await getBoard(options.projectId ?? null);
-      const config = await settings.get();
-      for (const card of board.cards) {
-        if (disposed) break;
-        if (options.environmentId && card.environmentId !== options.environmentId) continue;
-        if (paused(card.environmentId)) continue;
-        try {
-          const state = readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined;
-          if (!state || state.updated_at !== card.stageUpdatedAt) continue;
-          if (setupAutomation.pending(card.environmentId) && state.stage !== "design") continue;
-          const threads = (await listThreads(card.projectId)).filter(thread => thread.environmentId === card.environmentId);
-          // A transport failure can hide a successful spawn. Attach its worker even while it runs.
-          const request = readStageThreadLaunch.get(card.environmentId, state.stage, state.updated_at) as StageThreadLaunchRow | undefined;
-          if (request && ["pending", "starting", "failed", "blocked"].includes(request.status)) {
-            const orphan = threads.find(thread => thread.title === launchTitle(card.environmentId, state.stage, state.updated_at));
-            if (orphan) {
-              saveStageThreadLaunch.run(card.environmentId, state.stage, state.updated_at, "started", orphan.id);
-              setOwner.run(orphan.id, card.environmentId, state.updated_at);
-              state.owner_thread_id = orphan.id;
-            }
+    return recovery = (async () => {
+      let failure: unknown;
+      try {
+        for (let next: ReconcileScope | null = scope; next && !disposed; next = takeQueuedScope()) {
+          try { await reconcilePass(next); } catch (error) { failure ??= error; }
+        }
+      } finally { recovery = undefined; queuedScopes.clear(); }
+      if (failure) throw failure;
+    })();
+  }
+
+  async function reconcilePass(options: ReconcileScope) {
+    const inScope = (environmentId: string) => !options.environmentIds || options.environmentIds.has(environmentId);
+    const listed = await listThreads(options.projectId ?? undefined);
+    if (options.environmentIds) for (const environmentId of options.environmentIds) await setupAutomation.tick(environmentId, options.force, listed);
+    else await setupAutomation.tickAll(options.force, listed);
+    const board = await getBoard(options.projectId, listed);
+    const config = await settings.get();
+    const prCards = board.cards.filter(card => inScope(card.environmentId) && !paused(card.environmentId) &&
+      (readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined)?.stage === "pr").map(card => card.environmentId);
+    // A failed read skips PR Watch cards in this pass; other cards continue.
+    const pullRequests = prCards.length ? await readPullRequests(prCards) : {};
+    for (const card of board.cards) {
+      if (disposed) break;
+      if (!inScope(card.environmentId)) continue;
+      if (paused(card.environmentId)) continue;
+      try {
+        const state = readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined;
+        if (!state || state.updated_at !== card.stageUpdatedAt) continue;
+        if (setupAutomation.pending(card.environmentId) && state.stage !== "design") continue;
+        const threads = listed.filter(thread => thread.environmentId === card.environmentId);
+        // A transport failure can hide a successful spawn. Attach its worker even while it runs.
+        const request = readStageThreadLaunch.get(card.environmentId, state.stage, state.updated_at) as StageThreadLaunchRow | undefined;
+        if (request && ["pending", "starting", "failed", "blocked"].includes(request.status)) {
+          const orphan = threads.find(thread => thread.title === launchTitle(card.environmentId, state.stage, state.updated_at));
+          if (orphan) {
+            saveStageThreadLaunch.run(card.environmentId, state.stage, state.updated_at, "started", orphan.id);
+            setOwner.run(orphan.id, card.environmentId, state.updated_at);
+            state.owner_thread_id = orphan.id;
           }
-          if (threads.some(thread => hasLiveWork(thread) || thread.hasPendingInteraction)) continue;
-          let queued = false;
-          for (const thread of threads) {
-            if ((await bb.sdk.threads.queuedMessages.list({ threadId: thread.id })).length ||
-                (await bb.sdk.threads.interactions.list({ threadId: thread.id })).length) { queued = true; break; }
+        }
+        // The orchestrator's own turn and background work never hold dispatch or retry.
+        const orchestratorId = setupAutomation.orchestrator(card.environmentId);
+        if (await findDispatchHolder(bb.sdk, threads, orchestratorId)) continue;
+        if ((await bb.sdk.environments.get({ environmentId: card.environmentId })).status !== "ready") continue;
+        const blocker = blockedAttempt(card.environmentId);
+        if (blocker) {
+          if (blocker.waitingForUser) continue;
+          if (config.autoAdvanceImplementation && ["tdd", "quality", "simplify"].includes(state.stage) && blocker.evidence.nextAction && blocker.evidence.decisionsResolved) {
+            await tddRepair.continueRepair(card.environmentId, blocker.evidence, () => {
+              const current = blockedAttempt(card.environmentId);
+              return !paused(card.environmentId) && !setupAutomation.pending(card.environmentId) &&
+                current?.recordedAt === blocker.recordedAt && JSON.stringify(current.evidence) === JSON.stringify(blocker.evidence) &&
+                (readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined)?.owner_thread_id === state.owner_thread_id;
+            });
           }
-          if (queued || (await bb.sdk.environments.get({ environmentId: card.environmentId })).status !== "ready") continue;
-          const blocker = blockedAttempt(card.environmentId);
-          if (blocker) {
-            if (blocker.waitingForUser) continue;
-            if (config.autoAdvanceImplementation && ["tdd", "quality", "simplify"].includes(state.stage) && blocker.evidence.nextAction && blocker.evidence.decisionsResolved) {
-              await tddRepair.continueRepair(card.environmentId, blocker.evidence, () => {
-                const current = blockedAttempt(card.environmentId);
-                return !paused(card.environmentId) && !setupAutomation.pending(card.environmentId) &&
-                  current?.recordedAt === blocker.recordedAt && JSON.stringify(current.evidence) === JSON.stringify(blocker.evidence) &&
+          const saved = taskFor(card.environmentId);
+          if (config.autoAdvanceImplementation && orchestratorId && state.owner_thread_id && blocker.evidence.decisionsResolved && !blocker.evidence.nextAction && prDelivery(saved.task)) {
+            await stageContinuation.help(orchestratorId, state.owner_thread_id, card.environmentId,
+              `${card.environmentId}:${state.updated_at}:${saved.revision}`, blocker.reason, () => {
+                const latest = blockedAttempt(card.environmentId);
+                return !paused(card.environmentId) && !setupAutomation.pending(card.environmentId) && latest?.recordedAt === blocker.recordedAt &&
                   (readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined)?.owner_thread_id === state.owner_thread_id;
               });
-            }
-            const saved = taskFor(card.environmentId);
-            const orchestratorId = setupAutomation.orchestrator(card.environmentId);
-            if (config.autoAdvanceImplementation && orchestratorId && state.owner_thread_id && blocker.evidence.decisionsResolved && !blocker.evidence.nextAction && prDelivery(saved.task)) {
-              await stageContinuation.help(orchestratorId, state.owner_thread_id, card.environmentId,
-                `${card.environmentId}:${state.updated_at}:${saved.revision}`, blocker.reason, () => {
-                  const latest = blockedAttempt(card.environmentId);
-                  return !paused(card.environmentId) && !setupAutomation.pending(card.environmentId) && latest?.recordedAt === blocker.recordedAt &&
-                    (readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined)?.owner_thread_id === state.owner_thread_id;
-                });
-            }
+          }
+          continue;
+        }
+        if (state.stage === "pr") {
+          const pr = pullRequests[card.environmentId];
+          if (pr?.outcome === "available" && pr.pullRequest.state === "merged") {
+            await moveWorktree(card.environmentId, "done", "Pull request merge verified.", "automation", undefined, pr);
             continue;
           }
-          if (state.stage === "pr") {
-            const pr = await bb.sdk.environments.pullRequest({ environmentId: card.environmentId });
-            if (pr.outcome === "available" && pr.pullRequest.state === "merged") {
-              await moveWorktree(card.environmentId, "done", "Pull request merge verified.", "automation");
-              continue;
-            }
-            if (pr.outcome === "unavailable" || (pr.outcome === "available" && pr.pullRequest.state === "closed")) continue;
-          }
-          if (state.owner_thread_id && !["design", "review", "done", "tickets"].includes(state.stage)) {
-            const owner = await bb.sdk.threads.get({ threadId: state.owner_thread_id });
-            if (owner?.status === "error") {
-              if (!options.force && (state.stage === "pr" ? config.simplifyToPrMode !== "auto" : !config.autoAdvanceImplementation)) continue;
-              const revision = taskFor(card.environmentId).revision;
-              await threadRetry.retry(owner.id, card.environmentId, `stage:${card.environmentId}:${state.updated_at}:${revision}`, () => {
-                const current = readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined;
-                return current?.updated_at === state.updated_at && current.owner_thread_id === owner.id &&
-                  taskFor(card.environmentId).revision === revision && !paused(card.environmentId) &&
-                  !blockedAttempt(card.environmentId) && !setupAutomation.pending(card.environmentId);
-              }, options.force);
-              continue;
-            }
-          }
-          if (state.owner_thread_id) await advanceCompleted(card.environmentId, state.owner_thread_id);
-          const current = readWorktreeState.get(card.environmentId) as WorktreeStateRow;
-          if (current.updated_at !== state.updated_at) continue;
-          const saved = taskFor(card.environmentId);
-          if (config.autoAdvanceImplementation && state.owner_thread_id && ["tdd", "quality", "simplify"].includes(state.stage) &&
-              prDelivery(saved.task) && !readResult.get(card.environmentId, state.updated_at)) {
-            await stageContinuation.resume(state.owner_thread_id, card.environmentId, state.stage,
-              `${card.environmentId}:${state.updated_at}:${saved.revision}`, () => {
-                const latest = readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined;
-                return latest?.updated_at === state.updated_at && latest.owner_thread_id === state.owner_thread_id &&
-                  taskFor(card.environmentId).revision === saved.revision && !paused(card.environmentId) &&
-                  !blockedAttempt(card.environmentId) && !readResult.get(card.environmentId, state.updated_at) && !setupAutomation.pending(card.environmentId);
-              });
-          }
-          // Old requests cannot restart work after an explicit stage change.
-          db.prepare(`UPDATE worktree_stage_thread_launches SET status = 'paused', last_error = 'Superseded by a newer stage'
-            WHERE environment_id = ? AND status IN ('pending','starting','failed') AND (stage != ? OR stage_updated_at != ?)`)
-            .run(card.environmentId, state.stage, state.updated_at);
-          const launch = readStageThreadLaunch.get(card.environmentId, state.stage, state.updated_at) as StageThreadLaunchRow | undefined;
-          if (!launch || ["started", "blocked", "paused"].includes(launch.status)) continue;
-          if (launch.status === "starting") {
-            if (stageThreadStarts.has(`${card.environmentId}:${state.stage}`) || launch.updated_at > Date.now() - 120_000) continue;
-            const worker = threads.find(thread => thread.title === launchTitle(card.environmentId, state.stage, state.updated_at));
-            if (worker) {
-              saveStageThreadLaunch.run(card.environmentId, state.stage, state.updated_at, "started", worker.id);
-              setOwner.run(worker.id, card.environmentId, state.updated_at);
-              continue;
-            }
-            if (launch.attempt_count === 0) {
-              db.prepare(`UPDATE worktree_stage_thread_launches SET status = 'blocked', last_error = 'Legacy start has an uncertain result; inspect before retry'
-                WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?`).run(card.environmentId, state.stage, state.updated_at);
-              continue;
-            }
-            db.prepare(`UPDATE worktree_stage_thread_launches SET status = 'failed', next_attempt_at = 0,
-              last_error = 'Start lease expired; no matching worker exists' WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?`)
-              .run(card.environmentId, state.stage, state.updated_at);
-          }
-          if (state.stage !== "pr" && !config.autoAdvanceImplementation) continue;
-          if (state.stage === "pr" && config.simplifyToPrMode !== "auto") continue;
-          if (options.force && launch.status === "failed") {
-            db.prepare("UPDATE worktree_stage_thread_launches SET next_attempt_at = 0 WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
-              .run(card.environmentId, state.stage, state.updated_at);
-          }
-          await startWorkForStage(card.environmentId, state.stage as StageId, state.updated_at);
-        } catch (error) {
-          bb.log.error(`Recovery for ${card.environmentId} failed: ${error instanceof Error ? error.message : String(error)}`);
+          if (!pr || pr.outcome === "unavailable" || (pr.outcome === "available" && pr.pullRequest.state === "closed")) continue;
         }
+        if (state.owner_thread_id && !["design", "review", "done", "tickets"].includes(state.stage)) {
+          const owner = await bb.sdk.threads.get({ threadId: state.owner_thread_id });
+          if (owner?.status === "error") {
+            if (!options.force && !config.autoAdvanceImplementation) continue;
+            const revision = taskFor(card.environmentId).revision;
+            await threadRetry.retry(owner.id, card.environmentId, `stage:${card.environmentId}:${state.updated_at}:${revision}`, () => {
+              const current = readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined;
+              return current?.updated_at === state.updated_at && current.owner_thread_id === owner.id &&
+                taskFor(card.environmentId).revision === revision && !paused(card.environmentId) &&
+                !blockedAttempt(card.environmentId) && !setupAutomation.pending(card.environmentId);
+            }, options.force);
+            continue;
+          }
+        }
+        if (state.owner_thread_id) await advanceCompleted(card.environmentId, state.owner_thread_id);
+        const current = readWorktreeState.get(card.environmentId) as WorktreeStateRow;
+        if (current.updated_at !== state.updated_at) continue;
+        const saved = taskFor(card.environmentId);
+        if (config.autoAdvanceImplementation && state.owner_thread_id && ["tdd", "quality", "simplify"].includes(state.stage) &&
+            prDelivery(saved.task) && !readResult.get(card.environmentId, state.updated_at)) {
+          await stageContinuation.resume(state.owner_thread_id, card.environmentId, state.stage,
+            `${card.environmentId}:${state.updated_at}:${saved.revision}`, () => {
+              const latest = readWorktreeState.get(card.environmentId) as WorktreeStateRow | undefined;
+              return latest?.updated_at === state.updated_at && latest.owner_thread_id === state.owner_thread_id &&
+                taskFor(card.environmentId).revision === saved.revision && !paused(card.environmentId) &&
+                !blockedAttempt(card.environmentId) && !readResult.get(card.environmentId, state.updated_at) && !setupAutomation.pending(card.environmentId);
+            });
+        }
+        // Old requests cannot restart work after an explicit stage change.
+        db.prepare(`UPDATE worktree_stage_thread_launches SET status = 'paused', last_error = 'Superseded by a newer stage'
+          WHERE environment_id = ? AND status IN ('pending','starting','failed') AND (stage != ? OR stage_updated_at != ?)`)
+          .run(card.environmentId, state.stage, state.updated_at);
+        const launch = readStageThreadLaunch.get(card.environmentId, state.stage, state.updated_at) as StageThreadLaunchRow | undefined;
+        if (!launch || ["started", "blocked", "paused"].includes(launch.status)) continue;
+        if (launch.status === "starting") {
+          if (stageThreadStarts.has(`${card.environmentId}:${state.stage}`) || launch.updated_at > Date.now() - 120_000) continue;
+          const worker = threads.find(thread => thread.title === launchTitle(card.environmentId, state.stage, state.updated_at));
+          if (worker) {
+            saveStageThreadLaunch.run(card.environmentId, state.stage, state.updated_at, "started", worker.id);
+            setOwner.run(worker.id, card.environmentId, state.updated_at);
+            continue;
+          }
+          if (launch.attempt_count === 0) {
+            db.prepare(`UPDATE worktree_stage_thread_launches SET status = 'blocked', last_error = 'Legacy start has an uncertain result; inspect before retry'
+              WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?`).run(card.environmentId, state.stage, state.updated_at);
+            continue;
+          }
+          db.prepare(`UPDATE worktree_stage_thread_launches SET status = 'failed', next_attempt_at = 0,
+            last_error = 'Start lease expired; no matching worker exists' WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?`)
+            .run(card.environmentId, state.stage, state.updated_at);
+        }
+        if (state.stage !== "pr" && !config.autoAdvanceImplementation) continue;
+        if (state.stage === "pr" && config.simplifyToPrMode !== "auto") continue;
+        if (options.force && launch.status === "failed") {
+          db.prepare("UPDATE worktree_stage_thread_launches SET next_attempt_at = 0 WHERE environment_id = ? AND stage = ? AND stage_updated_at = ?")
+            .run(card.environmentId, state.stage, state.updated_at);
+        }
+        await startWorkForStage(card.environmentId, state.stage as StageId, state.updated_at);
+      } catch (error) {
+        bb.log.error(`Recovery for ${card.environmentId} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    })();
-    try { await recovery; } finally { recovery = undefined; }
+    }
   }
 
   async function readTaskMap(): Promise<TaskMapResult> {
@@ -1457,7 +1506,9 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   async function health(projectId: string | null) {
-    const board = await getBoard(projectId);
+    const listed = await listThreads(projectId ?? undefined);
+    const board = await getBoard(projectId, listed);
+    const config = await settings.get();
     return [...await taskMapHealth(), ...(await Promise.all(board.cards.map(async card => {
       const launch = readStageThreadLaunch.get(card.environmentId, card.stage, card.stageUpdatedAt) as StageThreadLaunchRow | undefined;
       const blocker = blockedAttempt(card.environmentId);
@@ -1479,28 +1530,40 @@ export default async function plugin(bb: BbPluginApi) {
           threadId: retryThreadId, paused: paused(card.environmentId), waitingForInput: card.hasPendingInteraction, hasLiveWork: false }];
       }
       const setupJob = setupAutomation.latest(card.environmentId);
+      // Read only when a card can wait; a failed read leaves the saved error in place.
+      const findHolder = () => findDispatchHolder(bb.sdk, listed.filter(thread => thread.environmentId === card.environmentId), setupAutomation.orchestrator(card.environmentId))
+        .catch(() => undefined);
       if (!paused(card.environmentId) && setupJob &&
           (["pending", "starting", "started", "blocked"].includes(setupJob.status) ||
            (setupJob.status === "stale" && setupJob.stage_updated_at === card.stageUpdatedAt))) {
+        const holder = setupJob.status === "blocked" ? undefined : await findHolder();
         if (setupJob.status === "started" && setupJob.thread_id && !setupJob.last_error) {
           const planner = await bb.sdk.threads.get({ threadId: setupJob.thread_id }).catch(() => null);
-          if (planner && hasLiveWork(planner) && !card.hasPendingInteraction &&
+          if (planner && holdsDispatch(planner) && !card.hasPendingInteraction && !holder &&
               !(await bb.sdk.threads.interactions.list({ threadId: planner.id })).length) return [];
         }
         return [{ environmentId: card.environmentId, projectId: card.projectId, stage: card.stage, stageUpdatedAt: card.stageUpdatedAt,
-          status: `setup-${setupJob.status}`, attempts: setupJob.attempts, error: setupJob.last_error,
+          status: `setup-${setupJob.status}`, attempts: setupJob.attempts, error: holder ? dispatchHoldMessage(holder) : setupJob.last_error,
           waitingForInput: card.hasPendingInteraction, hasLiveWork: card.status === "active" }];
       }
       if (paused(card.environmentId) || !launch || launch.status === "paused") return [];
       let status: string = launch.status;
-      let error = launch.last_error;
+      // A blocked start does not move when the holder finishes, so keep its saved error.
+      const holder = launch.status === "blocked" ? undefined : await findHolder();
+      let error = holder ? dispatchHoldMessage(holder) : launch.last_error;
       if (launch.status === "started") {
         const owner = launch.thread_id ? await bb.sdk.threads.get({ threadId: launch.thread_id }).catch(() => null) : null;
         if (!owner || owner.deletedAt || owner.archivedAt || owner.environmentId !== card.environmentId) { status = "worker-unavailable"; error = "The assigned worker is unavailable. Inspect it before resuming work."; }
-        else if (owner.status === "error") { status = "worker-failed"; error ??= "The stage worker failed. The board retries the same thread within its saved retry limit."; }
+        else if (owner.status === "error") {
+          status = "worker-failed";
+          error ??= config.autoAdvanceImplementation
+            ? "The stage worker failed. Inspect this thread or run bb treelanes resume to check its retry state."
+            : "The stage worker failed. Automatic retry is off; retry the thread or run bb treelanes resume.";
+        }
         else if ((await bb.sdk.threads.interactions.list({ threadId: owner.id })).length) { status = "waiting-for-decision"; error ??= "The stage worker has a pending question or approval."; }
-        else if (hasLiveWork(owner) || (await bb.sdk.threads.queuedMessages.list({ threadId: owner.id })).length) return [];
-        else if (error) status = "evidence-stale";
+        else if (holdsDispatch(owner) || (await bb.sdk.threads.queuedMessages.list({ threadId: owner.id })).length) return [];
+        else if (holder) status = "waiting-for-thread";
+        else if (launch.last_error) status = "evidence-stale";
         else if (card.stage !== "pr" && !readResult.get(card.environmentId, card.stageUpdatedAt)) {
           status = "evidence-needed"; error = "The worker is idle without completion evidence. It may have been stopped; no automatic restart was attempted.";
         } else return [];
@@ -1511,9 +1574,9 @@ export default async function plugin(bb: BbPluginApi) {
     }))).flat()];
   }
 
-  async function getBoard(projectId: string | null) {
+  async function getBoard(projectId: string | null, listed?: ThreadRow[]) {
     const [threads, projects, lifecycle] = await Promise.all([
-      listThreads(projectId ?? undefined),
+      listed ?? listThreads(projectId ?? undefined),
       bb.sdk.projects.list({ includePersonal: true }),
       sidebarState.lifecycle(),
     ]);
@@ -1918,6 +1981,11 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
+  // A board start that waited for another thread runs when a thread in its worktree goes idle.
+  const heldLaunch = (environmentId: string) => {
+    const state = readWorktreeState.get(environmentId) as WorktreeStateRow | undefined;
+    return Boolean(state && (readStageThreadLaunch.get(environmentId, state.stage, state.updated_at) as StageThreadLaunchRow | undefined)?.status === "pending");
+  };
   const publishThreadChange = ({ thread }: { thread: { id: string } }) => {
     bb.realtime.publish("board-changed", { threadId: thread.id });
   };
@@ -1925,7 +1993,8 @@ export default async function plugin(bb: BbPluginApi) {
   bb.events.on("thread.active", publishThreadChange);
   bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
     publishThreadChange({ thread });
-    if (thread.environmentId && (setupAutomation.enabled(thread.environmentId) || blockedAttempt(thread.environmentId)?.evidence.nextAction)) await reconcileWorktrees({ environmentId: thread.environmentId });
+    if (thread.environmentId && (setupAutomation.enabled(thread.environmentId) || blockedAttempt(thread.environmentId)?.evidence.nextAction ||
+        heldLaunch(thread.environmentId))) await reconcileWorktrees({ environmentId: thread.environmentId });
     if (!lastAssistantText) return;
     const completion = reportedCompletionTransition(lastAssistantText);
     if (!completion) return;

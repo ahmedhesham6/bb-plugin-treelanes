@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   captureWorkspace,
   completionEvidenceSchema,
@@ -384,5 +384,61 @@ describe("captureWorkspace", () => {
     await expect(
       captureWorkspace(diffFixture.sdk, "environment-one"),
     ).rejects.toThrow(/unavailable/u);
+  });
+  it("reads workspace status and diffs through the bb--git plugin", async () => {
+    const fixture = makeSdk({ files: { "src/file.ts": { content: "new" } } });
+    // Drop the retired reads so only the bb--git RPC can serve them.
+    const { status: _status, diff: _diff, ...environments } = fixture.sdk.environments;
+    const rpcs: Array<{ method: string; input: unknown }> = [];
+    const sdk = {
+      ...fixture.sdk,
+      environments,
+      plugins: {
+        callRpc: async (args: Parameters<typeof fixture.sdk.plugins.callRpc>[0]) => {
+          rpcs.push({ method: args.method, input: args.input });
+          return fixture.sdk.plugins.callRpc(args);
+        },
+      },
+    } as unknown as typeof fixture.sdk;
+
+    expect(await captureWorkspace(sdk, "environment-one")).toMatch(/^[0-9a-f]{64}$/u);
+    expect(rpcs).toEqual(expect.arrayContaining([
+      { method: "workspaceStatus", input: { environmentId: "environment-one", mergeBaseBranch: "main" } },
+      { method: "diff", input: expect.objectContaining({ environmentId: "environment-one", target: { type: "branch_committed", mergeBaseBranch: "main" } }) },
+      { method: "diff", input: expect.objectContaining({ environmentId: "environment-one", target: { type: "uncommitted" } }) },
+      { method: "diff", input: expect.objectContaining({ environmentId: "environment-one", target: { type: "all", mergeBaseBranch: "main" } }) },
+    ]));
+  });
+
+  it("reads 100 changed files within a few host round trips", async () => {
+    const paths = Array.from({ length: 100 }, (_, index) => `src/file-${index}.ts`);
+    const fixture = makeSdk({
+      files: Object.fromEntries(paths.map((path) => [path, { content: `new ${path}` }])),
+      diffFiles: paths.map((path) => ({ path, previousPath: null, changeKind: "modified" as const,
+        additions: 1, deletions: 1, binary: false, origin: "tracked" as const, loadMode: "auto" as const })),
+    });
+    const slow = (read: (args: Record<string, unknown>) => Promise<unknown>) => async (args: Record<string, unknown>) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return read(args);
+    };
+    const sdk = fixture.sdk as unknown as {
+      environments: { diffFile: (args: Record<string, unknown>) => Promise<unknown> };
+      files: { read: (args: Record<string, unknown>) => Promise<unknown> };
+    };
+    sdk.environments.diffFile = slow(sdk.environments.diffFile);
+    sdk.files.read = slow(sdk.files.read);
+
+    vi.useFakeTimers();
+    let finished = false;
+    const capture = captureWorkspace(fixture.sdk, "environment-one").then(() => { finished = true; });
+    try {
+      // Advance host latency without making this check depend on machine load.
+      await vi.advanceTimersByTimeAsync(600);
+      expect(finished).toBe(true);
+    } finally {
+      await vi.runAllTimersAsync();
+      await capture;
+      vi.useRealTimers();
+    }
   });
 });
