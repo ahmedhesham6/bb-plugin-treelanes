@@ -385,7 +385,7 @@ describe("captureWorkspace", () => {
       captureWorkspace(diffFixture.sdk, "environment-one"),
     ).rejects.toThrow(/unavailable/u);
   });
-  it.fails("reads workspace status and diffs through the bb--git plugin", async () => {
+  it("reads workspace status and diffs through the bb--git plugin", async () => {
     const fixture = makeSdk({ files: { "src/file.ts": { content: "new" } } });
     const legacy = fixture.sdk.environments as unknown as Record<string, (args: Record<string, unknown>) => Promise<unknown>>;
     const rpcs: Array<{ method: string; input: Record<string, unknown> }> = [];
@@ -413,7 +413,7 @@ describe("captureWorkspace", () => {
     ]));
   });
 
-  it.fails("reads 100 changed files within a few host round trips", async () => {
+  it("reads 100 changed files within a few host round trips", async () => {
     const paths = Array.from({ length: 100 }, (_, index) => `src/file-${index}.ts`);
     const fixture = makeSdk({
       files: Object.fromEntries(paths.map((path) => [path, { content: `new ${path}` }])),

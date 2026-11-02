@@ -231,8 +231,7 @@ function pullRequestReads(harness: ReturnType<typeof createFakePluginHost>["harn
 }
 
 describe("Board reliability", () => {
-  // Reproductions of the removed environments.pullRequest call: the fix step removes each `.fails`.
-  it.fails.each([
+  it.each([
     {
       reason: "no pull request",
       pullRequest: { outcome: "absent" as const },
@@ -278,7 +277,7 @@ describe("Board reliability", () => {
     await harness.lifecycle.dispose();
   });
 
-  it.fails("accepts Done only for a merged pull request on the environment branch", async () => {
+  it("accepts Done only for a merged pull request on the environment branch", async () => {
     const worktree = worktreeThread({
       id: "thread-done-accepted",
       projectId: "project-one",
@@ -311,7 +310,7 @@ describe("Board reliability", () => {
     await harness.lifecycle.dispose();
   });
 
-  it.fails("moves merged PR Watch cards to Done with one pull request read per pass", async () => {
+  it("moves merged PR Watch cards to Done with one pull request read per pass", async () => {
     const merged = worktreeThread({ id: "thread-merged", projectId: "project-one", title: "Merged", parentThreadId: null });
     const waiting = worktreeThread({ id: "thread-waiting", projectId: "project-one", title: "Host down", parentThreadId: null,
       environmentId: "environment-two", environmentBranchName: "feat/two" });

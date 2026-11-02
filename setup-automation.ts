@@ -49,7 +49,8 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
   const readRun = (env: string) => db.prepare("SELECT * FROM worktree_delivery_runs WHERE environment_id = ?").get(env) as { initiator_thread_id: string; request_json: string; recovery_count: number } | undefined;
   const title = (job: SetupRequest) => `Workflow orchestrator [${job.environment_id}:${job.id}:${job.attempts}]`;
   const pending = (env: string) => { const job = latest(env); return Boolean(job && ["pending", "starting", "started", "blocked"].includes(job.status)); };
-  const isPlanner = (id: string, threadTitle?: string | null) => Boolean(db.prepare("SELECT 1 FROM worktree_setup_requests r JOIN worktree_cards c ON c.environment_id = r.environment_id WHERE r.thread_id = ? AND c.stage != 'design'").get(id)) || Boolean((threadTitle?.startsWith("Workflow setup [") || threadTitle?.startsWith("Workflow orchestrator [")) && db.prepare("SELECT * FROM worktree_setup_requests WHERE status = 'starting'").all().some(row => title(row as SetupRequest) === threadTitle));
+  // A thread is a setup worker only while its setup request is starting or started.
+  const isPlanner = (id: string, threadTitle?: string | null) => Boolean(db.prepare("SELECT 1 FROM worktree_setup_requests r JOIN worktree_cards c ON c.environment_id = r.environment_id WHERE r.thread_id = ? AND r.status IN ('starting', 'started') AND c.stage != 'design'").get(id)) || Boolean((threadTitle?.startsWith("Workflow setup [") || threadTitle?.startsWith("Workflow orchestrator [")) && db.prepare("SELECT * FROM worktree_setup_requests WHERE status = 'starting'").all().some(row => title(row as SetupRequest) === threadTitle));
   const fresh = (job: SetupRequest) => {
     const state = hooks.context(job.environment_id);
     if (state.taskRevision !== job.task_revision || state.stageUpdatedAt !== job.stage_updated_at) throw new Error("Setup request is stale. The task or stage changed.");
@@ -268,7 +269,7 @@ export function createSetupAutomation(bb: BbPluginApi, db: Db, hooks: {
       if (latest(job.environment_id)?.status === "applied") throw new Error("This setup was already applied.");
       hooks.commit(job, plan);
       db.prepare("UPDATE worktree_setup_requests SET status = 'applied', thread_id = ?, last_error = NULL WHERE id = ?").run(threadId, job.id);
-      return { saved: true, taskRevision: hooks.context(job.environment_id).taskRevision, dispatch: "after setup worker is idle" };
+      return { saved: true, taskRevision: hooks.context(job.environment_id).taskRevision, dispatch: "Dispatch starts when the setup worker's turn ends." };
     })();
   }
   async function tickAll(force = false) {

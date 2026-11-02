@@ -34,8 +34,11 @@ part from the [`delivery` skill](../skills/delivery/SKILL.md).
 
 ## Checks
 
-`requiredChecks` apply at every stage. `stageChecks` add named checks for
-`design`, `tdd`, `quality` and `simplify`. For example, put a focused
+`requiredChecks` gate the last implementation step before PR Watch, or the
+last step of a local task. Earlier steps need their own checks and their
+stage's `stageChecks`, with at least one passing check. A stage worker cannot
+remove a `requiredChecks` entry; the orchestrator and the user's thread can.
+`stageChecks` add named checks for `design`, `tdd`, `quality` and `simplify`. For example, put a focused
 regression in `stageChecks.tdd` and a broader suite in `stageChecks.quality`.
 `context` returns the combined check names and `nextStage`, and the next worker
 reads them from fresh context.
@@ -154,7 +157,7 @@ sequenceDiagram
   needs no extra service or credential. Later workers are its children.
 - The board accepts only the setup proposal; the Saved Task keeps its
   authority. Each step's choices must resolve against the live catalogs. The
-  first step starts after the orchestrator is idle.
+  first step can start while the orchestrator's turn still runs.
 
 Each Setup Request moves through durable states:
 
@@ -211,8 +214,11 @@ minutes, and uncertain legacy claims stay blocked for inspection.
 
 Launches stop after three attempts, at least 30 seconds apart. `reconcile` or a
 same-stage panel action retries a failed start at once and keeps the attempt
-limit. Recovery restarts no idle worker that lacks a receipt, waits for pending
-input, and adds no work while threads are active.
+limit. Recovery restarts no idle worker that lacks a receipt. Dispatch and
+Same-thread Retry wait for a turn, pending input, queued message, background
+agent, workflow, goal or plan mode on a thread other than the orchestrator.
+Background commands such as dev servers never hold a card, and health names
+the thread that does. A request during a pass runs one more pass after it.
 
 ### Same-thread Retry
 
@@ -280,8 +286,10 @@ open.
 `pause` stops recovery and automatic moves for a worktree. `resume` clears the
 pause and checks the saved state. `health` lists pending starts, failures,
 blocked starts, workers waiting for input, and missing or stale evidence.
-`health` and `snapshot` report state and start no workers. PR Watch moves to Done after bb confirms the
-merge.
+`health` and `snapshot` report state and start no workers. PR Watch moves to Done after the
+`bb--github-pr-status` plugin confirms a merged pull request for the worktree
+branch. Each pass reads all PR Watch cards in one call; an unavailable read
+leaves those cards in PR Watch.
 
 ## Agent interface
 

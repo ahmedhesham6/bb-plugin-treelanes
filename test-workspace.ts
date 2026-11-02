@@ -179,6 +179,18 @@ export function makeWorkspaceSdk(options: {
         };
       },
     },
+    plugins: {
+      // bb--git serves workspace status and diffs with the same rows.
+      callRpc: async ({ pluginId, method, input }: { pluginId: string; method: string; input: Record<string, unknown> }) => {
+        const environments = sdk.environments as unknown as Record<string, (args: Record<string, unknown>) => Promise<unknown>>;
+        if (pluginId === "bb--git" && method === "workspaceStatus") return environments.status!(input);
+        if (pluginId === "bb--git" && method === "diff") {
+          const { target: { type, ...target }, ...rest } = input as { target: { type: string } };
+          return environments.diff!({ ...rest, ...target, target: type });
+        }
+        throw new Error(`Unexpected RPC ${pluginId}.${method}`);
+      },
+    },
     files: {
       read: async (args: Record<string, unknown>) => {
         calls.push({ area: "files.read", args });

@@ -108,6 +108,7 @@ function sdkFor(threads: ReturnType<typeof worktreeThread>[]) {
         }),
     },
     files: snapshot.sdk.files,
+    plugins: snapshot.sdk.plugins,
     projects: {
       list: async () => [{ id: "project-one", name: "Test project" }],
     },
