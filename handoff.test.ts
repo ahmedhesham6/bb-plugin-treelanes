@@ -1517,6 +1517,20 @@ async function appliedSetup(requiredChecks = ["API regression"], firstChecks = [
   return { ...t, planner, plannerThread, call };
 }
 
+// Pauses the first queued-message read so a test can send requests during a running pass.
+function holdFirstQueuedRead(harness: Awaited<ReturnType<typeof setup>>["harness"], firstResult: unknown[]) {
+  let reached!: () => void; let release!: () => void;
+  const atGate = new Promise<void>(resolve => { reached = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let first = true;
+  harness.sdk.stub("threads.queuedMessages.list", async () => {
+    if (!first) return [];
+    first = false; reached(); await gate;
+    return firstResult;
+  });
+  return { atGate, release };
+}
+
 describe("board holds and gates", () => {
   it("starts setup in the active orchestrator's thread without waiting on its input", async () => {
     const t = await setup(false, { useInitiatingThread: true });
@@ -1583,14 +1597,6 @@ describe("board holds and gates", () => {
     await t.harness.behavior.runSchedule("reconcile-worktrees");
     expect(t.stage()).toBe("quality");
     expect(t.requests).toHaveLength(3);
-  });
-
-  it("names an optional failed check when decisions are unresolved", async () => {
-    const t = await setup();
-    const receipt = await t.receipt();
-    await expect(t.submit({ ...receipt, decisionsResolved: false,
-      checks: [...receipt.checks, { name: "Optional lint", status: "failed", evidence: "Invalid source" }] }))
-      .rejects.toThrow(/Optional lint/);
   });
 
   it("starts the setup worker while another thread runs a background command", async () => {
@@ -1663,14 +1669,7 @@ describe("board holds and gates", () => {
     }
     db.prepare("UPDATE worktree_cards SET owner_thread_id = 'worker-a' WHERE environment_id = 'env'").run();
     db.prepare("INSERT INTO worktree_cards (environment_id, stage, note, updated_at, owner_thread_id) VALUES ('env-b', 'tdd', NULL, 100, 'worker-b')").run();
-    let reached!: () => void; let release!: () => void;
-    const atGate = new Promise<void>(resolve => { reached = resolve; });
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    let first = true;
-    t.harness.sdk.stub("threads.queuedMessages.list", async () => {
-      if (first) { first = false; reached(); await gate; }
-      return [];
-    });
+    const { atGate, release } = holdFirstQueuedRead(t.harness, []);
     const pass = t.harness.behavior.runSchedule("reconcile-worktrees");
     await atGate;
     const queued = [t.harness.behavior.runCli(["resume", "env-b"]), t.harness.behavior.runSchedule("reconcile-worktrees")];
@@ -1704,15 +1703,7 @@ describe("board holds and gates", () => {
 
   it("runs a recovery request that arrives during a running pass", async () => {
     const t = await appliedSetup();
-    let reached!: () => void; let release!: () => void;
-    const atGate = new Promise<void>(resolve => { reached = resolve; });
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    let first = true;
-    t.harness.sdk.stub("threads.queuedMessages.list", async () => {
-      if (!first) return [];
-      first = false; reached(); await gate;
-      return [{ id: "queued-before-idle" }];
-    });
+    const { atGate, release } = holdFirstQueuedRead(t.harness, [{ id: "queued-before-idle" }]);
     const pass = t.harness.behavior.runSchedule("reconcile-worktrees");
     await atGate;
     const idle = t.harness.behavior.emitThreadEvent("thread.idle", { thread: t.plannerThread, lastAssistantText: "Plan saved" });
@@ -1764,10 +1755,14 @@ describe("board holds and gates", () => {
     expect((await t.call("treelanes_get_context", {}, worker)).task.requiredChecks).toEqual(["API regression", "Final gate"]);
   });
 
-  it("names a failed check when decisions are also unresolved", async () => {
+  it.each([
+    { kind: "required", name: "API regression", keep: false },
+    { kind: "optional", name: "Optional lint", keep: true },
+  ])("names a failed $kind check when decisions are also unresolved", async ({ name, keep }) => {
     const t = await setup();
-    await expect(t.submit({ ...await t.receipt(), decisionsResolved: false,
-      checks: [{ name: "API regression", status: "failed", evidence: "gitleaks is not installed" }] })).rejects.toThrow(/API regression/);
+    const receipt = await t.receipt();
+    await expect(t.submit({ ...receipt, decisionsResolved: false,
+      checks: [...keep ? receipt.checks : [], { name, status: "failed", evidence: "Check failed" }] })).rejects.toThrow(new RegExp(name));
   });
 
   it("does not promise a retry for a failed worker when automatic retry is off", async () => {

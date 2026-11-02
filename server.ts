@@ -1394,8 +1394,7 @@ export default async function plugin(bb: BbPluginApi) {
         }
         // The orchestrator's own turn and background work never hold dispatch or retry.
         const orchestratorId = setupAutomation.orchestrator(card.environmentId);
-        const holder = await findDispatchHolder(bb.sdk, threads, orchestratorId);
-        if (holder) continue;
+        if (await findDispatchHolder(bb.sdk, threads, orchestratorId)) continue;
         if ((await bb.sdk.environments.get({ environmentId: card.environmentId })).status !== "ready") continue;
         const blocker = blockedAttempt(card.environmentId);
         if (blocker) {

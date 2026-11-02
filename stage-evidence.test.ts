@@ -387,19 +387,16 @@ describe("captureWorkspace", () => {
   });
   it("reads workspace status and diffs through the bb--git plugin", async () => {
     const fixture = makeSdk({ files: { "src/file.ts": { content: "new" } } });
-    const legacy = fixture.sdk.environments as unknown as Record<string, (args: Record<string, unknown>) => Promise<unknown>>;
-    const rpcs: Array<{ method: string; input: Record<string, unknown> }> = [];
+    // Drop the retired reads so only the bb--git RPC can serve them.
+    const { status: _status, diff: _diff, ...environments } = fixture.sdk.environments;
+    const rpcs: Array<{ method: string; input: unknown }> = [];
     const sdk = {
       ...fixture.sdk,
-      environments: { get: legacy.get, diffFiles: legacy.diffFiles, diffFile: legacy.diffFile },
+      environments,
       plugins: {
-        callRpc: async ({ pluginId, method, input }: { pluginId: string; method: string; input: Record<string, unknown> }) => {
-          if (pluginId !== "bb--git") throw new Error(`Unexpected RPC ${pluginId}.${method}`);
-          rpcs.push({ method, input });
-          if (method === "workspaceStatus") return legacy.status!(input);
-          const { target, ...rest } = input as { target: Record<string, unknown> };
-          if (method === "diff") return legacy.diff!({ ...rest, target: target.type, ...(target.mergeBaseBranch ? { mergeBaseBranch: target.mergeBaseBranch } : {}) });
-          throw new Error(`Unexpected RPC ${pluginId}.${method}`);
+        callRpc: async (args: Parameters<typeof fixture.sdk.plugins.callRpc>[0]) => {
+          rpcs.push({ method: args.method, input: args.input });
+          return fixture.sdk.plugins.callRpc(args);
         },
       },
     } as unknown as typeof fixture.sdk;
