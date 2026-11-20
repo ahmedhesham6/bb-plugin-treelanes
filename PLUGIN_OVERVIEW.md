@@ -27,7 +27,7 @@ Agents use `treelanes_deliver`, `treelanes_get_context`, `treelanes_complete_sta
 
 ## Requirements
 
-- bb 0.43 or later, and Git.
+- bb 0.43.3 or later, and Git.
 - At least one agent harness, such as Claude Code or Codex. Agent work counts against that harness's account and usage limits.
 - The GitHub CLI (`gh`), signed in, for PR Watch.
 

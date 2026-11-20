@@ -6,6 +6,8 @@ import {
   loadPluginApp,
   renderSlot,
 } from "@get-bb/plugin-sdk/testing/app";
+import { existsSync } from "node:fs";
+import manifest from "./package.json" with { type: "json" };
 import { STAGES } from "./workflow";
 
 describe("Board panel", () => {
@@ -396,5 +398,54 @@ describe("Board panel", () => {
       threadId: "thread-pr",
     });
     slot.lifecycle.unmount();
+  });
+
+  it("draws the Tickets and Design stage icons from the plugin's declared icons", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "" },
+      {
+        rpc: {
+          getBoard: () => ({
+            stages: [...STAGES],
+            cards: [
+              {
+                environmentId: "environment-one",
+                projectId: "project-one",
+                projectName: "Test project",
+                worktreeName: "icon-worktree",
+                branchName: "feat/icons",
+                stage: "tickets" as const,
+                note: null,
+                status: "idle" as const,
+                hasPendingInteraction: false,
+                updatedAt: 2,
+                stageUpdatedAt: 1,
+                pendingThreadStart: null,
+                threads: [],
+              },
+            ],
+          }),
+        },
+        context: { projectId: "project-one", threadId: null },
+      },
+    );
+    try {
+      const declared: Record<string, string> =
+        manifest.bb.branding.experimental_icons;
+      for (const name of ["circle-dashed", "idea"]) {
+        await waitFor(() =>
+          expect(
+            document.querySelector(`[data-icon="treelanes/${name}"]`),
+          ).not.toBeNull(),
+        );
+        expect(existsSync(new URL(declared[name]!, import.meta.url))).toBe(
+          true,
+        );
+      }
+    } finally {
+      slot.lifecycle.unmount();
+    }
   });
 });

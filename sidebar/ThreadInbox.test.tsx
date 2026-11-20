@@ -82,8 +82,9 @@ const listProps = {
 async function render(
   threads: PluginSidebarThread[],
   projects = [{ id: "proj_1", name: "bb", isPersonal: false }],
+  props: PluginThreadListProps = listProps,
 ) {
-  return await renderSlot(inbox, listProps, {
+  return await renderSlot(inbox, props, {
     sidebarThreads: { status: "ready", threads, projects },
     // The lifecycle store is the plugin's own backend; an empty one means
     // every thread is active, which is what these list tests are about.
@@ -195,6 +196,27 @@ describe("ThreadInbox", async () => {
 
   // The DOM contract behind numbered thread shortcuts and thread.next/previous.
   // A plugin that drops these attributes silently breaks nine host shortcuts.
+  it("gives the open thread's row bb's selected row state", async () => {
+    await render(
+      [thread({ id: "open" }), thread({ id: "other" })],
+      undefined,
+      { ...listProps, activeThreadId: "open" },
+    );
+    const card = (id: string) =>
+      document.querySelector(`[data-sidebar-thread-id="${id}"]`)!
+        .parentElement!;
+    expect(card("open").className.split(" ")).toEqual(
+      expect.arrayContaining(["bg-state-active", "bb-sidebar-selected-row"]),
+    );
+    expect(card("open").classList.contains("bg-sidebar-accent")).toBe(false);
+    expect(card("other").classList.contains("hover:bg-sidebar-accent")).toBe(
+      true,
+    );
+    expect(card("other").classList.contains("bb-sidebar-selected-row")).toBe(
+      false,
+    );
+  });
+
   it("marks every row as a host shortcut target", async () => {
     await render([thread({ id: "thr_x" })]);
     const row = screen.getByRole("link");
@@ -676,6 +698,7 @@ describe("card metadata", async () => {
           id: "env_1",
           name: "Worktree",
           branchName: "bb/feature",
+          providerId: null,
           workspaceDisplayKind: "managed-worktree",
         },
       }),

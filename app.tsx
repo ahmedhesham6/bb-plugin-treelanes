@@ -96,8 +96,8 @@ function requestBuiltInDiffPanel(threadId: string): void {
 
 const STAGE_ICONS: Record<StageId, React.ComponentProps<typeof Icon>["name"]> =
   {
-    tickets: "CircleDashed",
-    design: "Idea",
+    tickets: `${PLUGIN_ID}/circle-dashed`,
+    design: `${PLUGIN_ID}/idea`,
     tdd: "Beaker",
     quality: "CircleCheck",
     simplify: "Clean",

@@ -67,7 +67,7 @@ flowchart LR
 
 ## Requirements
 
-- bb 0.43 or later.
+- bb 0.43.3 or later.
 - Git.
 - At least one agent harness that bb supports, such as Claude Code or Codex.
 - [GitHub CLI](https://cli.github.com) (`gh`), signed in, for PR Watch.

@@ -32,6 +32,7 @@ export function fixture(
           id: env,
           name: env,
           branchName: "same-branch",
+          providerId: null,
           workspaceDisplayKind: "managed-worktree",
         }
       : null,

@@ -128,7 +128,9 @@ export function ThreadCard(props: ThreadCardProps) {
             "group/card relative rounded-lg px-2.5 text-sidebar-foreground",
             compact ? "py-1.5" : "py-2",
             isDragging && "opacity-50",
-            isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60",
+            isActive
+              ? "bg-state-active bb-sidebar-selected-row"
+              : "hover:bg-sidebar-accent",
             !isActive &&
               (layout !== null || group?.expanded) &&
               "bg-sidebar-accent/30",

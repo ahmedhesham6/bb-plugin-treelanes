@@ -15,7 +15,7 @@ To report a security problem, read [SECURITY.md](SECURITY.md).
 
 ## Set up
 
-You need Node.js 24, npm, and bb 0.43 or later.
+You need Node.js 24, npm, and bb 0.43.3 or later.
 
 ```sh
 git clone https://github.com/ahmedhesham6/bb-plugin-treelanes
