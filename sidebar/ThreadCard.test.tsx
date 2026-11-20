@@ -173,6 +173,18 @@ describe("Worktree Card layout", () => {
     expect(line("meta")).not.toBeNull();
   });
 
+  it("keeps a card's lines at their desktop heights on touch screens", async () => {
+    mountCard([fixture("main", "env")]);
+    const { item } = await findCard();
+    const lines = Array.from(item.querySelectorAll("[data-card-body] > *"));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      const classes = line.className.split(" ");
+      expect(classes).not.toContain("pointer-coarse:h-11");
+      expect(classes).not.toContain("pointer-coarse:min-h-11");
+    }
+  });
+
   it("drops line 3 and moves the agent glyph up to the title when there is no branch, machine or PR", async () => {
     mountCard([fixture("main", null, { providerId: "claude-code" })]);
     const { item, line } = await findCard();

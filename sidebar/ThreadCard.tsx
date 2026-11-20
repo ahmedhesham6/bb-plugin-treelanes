@@ -211,7 +211,7 @@ export function ThreadCard(props: ThreadCardProps) {
           />
           {compact ? (
             <>
-              <div className="pointer-events-none relative flex min-h-7 items-center gap-2 pointer-coarse:min-h-11">
+              <div className="pointer-events-none relative flex min-h-7 items-center gap-2 pointer-coarse:min-h-9">
                 <span
                   className={cn(
                     "min-w-0 flex-1 self-center truncate text-sm leading-5 pointer-coarse:text-base pointer-coarse:leading-6",
@@ -222,7 +222,7 @@ export function ThreadCard(props: ThreadCardProps) {
                   {title}
                 </span>
                 {pr && <PullRequest pr={pr} />}
-                <span className="grid min-h-7 shrink-0 items-center justify-items-end pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:gap-1">
+                <span className="grid min-h-7 shrink-0 items-center justify-items-end pointer-coarse:flex pointer-coarse:min-h-9 pointer-coarse:gap-1 pointer-coarse:[&_button]:size-9">
                   <span
                     className={cn(
                       "col-start-1 row-start-1 group-hover/card:opacity-0 group-focus-within/card:opacity-0",
@@ -257,7 +257,7 @@ export function ThreadCard(props: ThreadCardProps) {
               >
                 <div
                   data-card-line="project"
-                  className="flex h-5 min-w-0 items-center gap-1.5 pointer-coarse:h-11"
+                  className="flex h-5 min-w-0 items-center gap-1.5"
                 >
                   {projectName ? (
                     <>
@@ -274,7 +274,7 @@ export function ThreadCard(props: ThreadCardProps) {
                   )}
                   <span
                     data-card-status=""
-                    className="relative ml-auto flex h-5 min-w-8 shrink-0 items-center justify-end text-xs pointer-coarse:h-11 pointer-coarse:gap-1"
+                    className="relative ml-auto flex h-5 min-w-8 shrink-0 items-center justify-end text-xs pointer-coarse:gap-1"
                   >
                     <span
                       data-status-value=""
@@ -292,7 +292,7 @@ export function ThreadCard(props: ThreadCardProps) {
                     <span
                       data-card-menu=""
                       className={cn(
-                        "absolute top-1/2 right-0 -translate-y-1/2 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 pointer-coarse:static pointer-coarse:translate-y-0 pointer-coarse:opacity-100",
+                        "absolute top-1/2 right-0 -translate-y-1/2 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 pointer-coarse:static pointer-coarse:-my-3 pointer-coarse:translate-y-0 pointer-coarse:opacity-100",
                         menuOpen && "opacity-100",
                       )}
                     >
@@ -320,7 +320,7 @@ export function ThreadCard(props: ThreadCardProps) {
                 {!metaLineEmpty && (
                   <div
                     data-card-line="meta"
-                    className="mt-0.5 flex h-4 min-w-0 items-center gap-1.5 text-xs text-muted-foreground pointer-coarse:h-11"
+                    className="mt-0.5 flex h-4 min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
                   >
                     <ProviderGlyph providerId={thread.providerId} leading />
                     {location ? (
@@ -343,7 +343,7 @@ export function ThreadCard(props: ThreadCardProps) {
                         }
                         onClick={group.toggle}
                         className={cn(
-                          "pointer-events-auto -mr-1.5 flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs tabular-nums hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-11",
+                          "pointer-events-auto -mr-1.5 flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs tabular-nums hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:-my-3.5 pointer-coarse:h-11",
                           group.expanded &&
                             "bg-sidebar-accent text-sidebar-foreground",
                         )}
@@ -390,7 +390,7 @@ function PullRequest({ pr }: { pr: PullRequestRow }) {
       rel="noreferrer"
       title={pr.title}
       className={cn(
-        "pointer-events-auto relative inline-flex min-h-6 shrink-0 items-center text-xs tabular-nums hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11",
+        "pointer-events-auto relative inline-flex min-h-6 shrink-0 items-center text-xs tabular-nums hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:-my-3.5 pointer-coarse:min-h-11",
         pr.state === "merged"
           ? "text-[color:var(--pr-merged)]"
           : pr.attention === "checks_failed" || pr.attention === "conflicts"
@@ -441,7 +441,7 @@ function CardPullRequest({ pr }: { pr: PullRequestRow }) {
       rel="noreferrer"
       aria-label={label}
       title={label}
-      className="pointer-events-auto relative inline-flex shrink-0 items-center gap-0.5 tabular-nums hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
+      className="pointer-events-auto relative inline-flex shrink-0 items-center gap-0.5 tabular-nums hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:-my-3.5 pointer-coarse:min-h-11"
     >
       <Icon
         name={state.icon}
