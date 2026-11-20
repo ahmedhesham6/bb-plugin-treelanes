@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
@@ -25,6 +25,20 @@ interface Props {
   onSnooze?: () => void;
   onRestore?: () => void;
   restoreLabel?: string;
+  onRegenerateTitle?: () => void;
+  regeneratingTitle?: boolean;
+}
+export function useRegenerateTitle(threadId: string) {
+  const sdk = useSdk();
+  const [pending, setPending] = useState(false);
+  const run = () => {
+    setPending(true);
+    void sdk.threads
+      .experimental_regenerateTitle({ threadId })
+      .catch(() => toast.error("Could not regenerate the title. Try again."))
+      .finally(() => setPending(false));
+  };
+  return { pending, run };
 }
 function useItems({
   thread,
@@ -35,6 +49,8 @@ function useItems({
   onSnooze,
   onRestore,
   restoreLabel,
+  onRegenerateTitle,
+  regeneratingTitle = false,
 }: Props) {
   const navigate = useBbNavigate();
   const sdk = useSdk();
@@ -77,6 +93,15 @@ function useItems({
           thread.isPinned ? sdk.threads.unpin(args) : sdk.threads.pin(args),
         ),
     },
+    ...(onRegenerateTitle
+      ? [
+          {
+            label: regeneratingTitle ? "Regenerating…" : "Regenerate title",
+            run: onRegenerateTitle,
+            disabled: regeneratingTitle,
+          },
+        ]
+      : []),
     ...(onMakeMain ? [{ label: "Use as main thread", run: onMakeMain }] : []),
     ...(onSettle
       ? [{ label: settleLabel ?? "Settle thread", run: onSettle, separator: true }]
@@ -99,12 +124,12 @@ function useItems({
       : []),
     ...lifecycleItem(ARCHIVE, "Archive", true),
     ...lifecycleItem(DELETE, "Delete"),
-  ] as { label: string; run: () => void; separator?: boolean }[];
+  ] as { label: string; run: () => void; separator?: boolean; disabled?: boolean }[];
 }
 const menuClass =
   "z-50 min-w-52 rounded-lg border border-border bg-popover p-1.5 shadow-lg text-popover-foreground";
 const itemClass =
-  "cursor-pointer rounded-md px-3 py-2 text-sm pointer-coarse:min-h-11 outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground";
+  "cursor-pointer rounded-md px-3 py-2 text-sm pointer-coarse:min-h-11 outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:cursor-default data-[disabled]:text-muted-foreground";
 export function RowContextMenu({
   children,
   ...props
@@ -119,6 +144,7 @@ export function RowContextMenu({
             <ContextMenu.Item
               key={item.label}
               onSelect={item.run}
+              disabled={item.disabled}
               className={cn(
                 itemClass,
                 item.separator && "mt-1 border-t border-border pt-3",
@@ -133,10 +159,13 @@ export function RowContextMenu({
     </ContextMenu.Root>
   );
 }
-export function RowMenuButton(props: Props) {
+export function RowMenuButton({
+  onOpenChange,
+  ...props
+}: Props & { onOpenChange?: (open: boolean) => void }) {
   const items = useItems(props);
   return (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root onOpenChange={onOpenChange}>
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
@@ -157,6 +186,7 @@ export function RowMenuButton(props: Props) {
             <DropdownMenu.Item
               key={item.label}
               onSelect={item.run}
+              disabled={item.disabled}
               className={cn(
                 itemClass,
                 item.separator && "mt-1 border-t border-border pt-3",

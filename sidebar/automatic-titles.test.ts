@@ -3,7 +3,8 @@ import {
   createFakePluginHost,
   makeThreadResponse,
 } from "@get-bb/plugin-sdk/testing";
-import { automaticTitles, isAutomaticTitle, titleResult } from "./automatic-titles";
+import { automaticTitles, titleResult } from "./automatic-titles";
+import { isAutomaticTitle } from "./display-title";
 const hosts: ReturnType<typeof createFakePluginHost>[] = [];
 afterEach(async () => {
   await Promise.all(hosts.splice(0).map((h) => h.harness.lifecycle.dispose()));
@@ -102,7 +103,7 @@ describe("automatic titles", () => {
     const { h, titles, title } = setup({ enabled: true });
     expect(await titles.run()).toEqual({ changed: 1 });
     expect(title()).toBe("Workflow Quality Loop [env_test:quality:123]");
-    expect(titles.list().rows[0].generated).toBe("Review invoice payments");
+    expect(titles.list(["child"]).rows[0].generated).toBe("Review invoice payments");
     expect(await titles.run()).toEqual({ changed: 0 });
     const [spawn] = h.harness.inspection.sdk.callsTo("threads.spawn");
     expect(spawn[0]).toMatchObject({

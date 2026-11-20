@@ -9,6 +9,7 @@ import { z } from "zod";
 import { groupDefinitions, groupStore, type MainThread } from "./group-store";
 import { automaticTitles, type TitleChoice } from "./automatic-titles";
 import { childVisibility } from "./child-visibility";
+import { TITLE_BATCH } from "./display-title";
 import { noInput } from "../rpc-input";
 
 type Db = ReturnType<BbPluginApi["storage"]["database"]>;
@@ -57,7 +58,7 @@ const threadIdSchema = z.object({ threadId: z.string().trim().min(1) });
 export const sidebarRpcContract = defineRpcContract({
   ...groupDefinitions,
   listTitles: {
-    input: noInput,
+    input: z.object({ threadIds: z.array(z.string().trim().min(1)).max(TITLE_BATCH) }),
     output: z.object({
       rows: z.array(
         z.object({
@@ -279,8 +280,8 @@ export function sidebar(bb: BbPluginApi, db: Db, deps: {
   }
   bb.rpc.register(sidebarRpcContract, {
     ...groups,
-    async listTitles() {
-      return titles.list();
+    async listTitles({ threadIds }) {
+      return titles.list(threadIds);
     },
     async listLifecycle() {
       return { rows: readAll() };

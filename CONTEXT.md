@@ -19,7 +19,7 @@ _Avoid_: core thread, root card
 
 **Unsettled Thread**: A bb thread that is in a Git Worktree and is not a Settled Thread. A thread becomes unsettled again when it has new attention or live work.
 
-**Display Title**: A short sidebar name for an automatic board thread. The model that the Task Map selects for titles writes it in a short hidden thread. The original title remains for run recovery. A manual rename takes priority. Automatic titles are off by default.
+**Display Title**: A short sidebar name for an automatic board thread. For a worker that runs a Setup Step, it is the step's title. Otherwise, when automatic titles are on, the model that the Task Map selects for titles writes it in a short hidden thread. A step title takes priority over a model title. The original title remains for run recovery. A manual rename takes priority. Automatic titles are off by default.
 
 **Worktree Stage**: The workflow stage stored for a Git Worktree. All threads in the worktree share this stage.
 

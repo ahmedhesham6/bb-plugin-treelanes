@@ -1,8 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-type ThreadResponse = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
-import { PLUGIN_ID } from "../plugin-id";
+import { isAutomaticTitle } from "./display-title";
 
 /** Harness and model for title generation, picked in Settings. */
 export type TitleChoice = { providerId: string; model: string };
@@ -23,16 +22,6 @@ export const titleResult = z.object({
     .max(12),
 });
 
-/** Only replace names we can identify as machine-generated. */
-export function isAutomaticTitle(
-  thread: Pick<ThreadResponse, "title" | "originPluginId">,
-) {
-  return (
-    thread.originPluginId === PLUGIN_ID &&
-    /^Workflow [^\n]+ \[env_[a-z0-9]+(?::[^\]\n]+)?\]$/.test(thread.title ?? "")
-  );
-}
-
 const TITLE_THREAD = "Treelanes titles";
 
 export function automaticTitles(
@@ -44,10 +33,18 @@ export function automaticTitles(
     thread_id TEXT PRIMARY KEY, original TEXT NOT NULL, generated TEXT,
     updated_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT
   )`);
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS deleted_title_threads (thread_id TEXT PRIMARY KEY)",
+  );
   bb.events.on("thread.deleted", ({ thread }) => {
-    db.prepare("DELETE FROM generated_titles WHERE thread_id = ?").run(
-      thread.id,
-    );
+    db.transaction(() => {
+      db.prepare("DELETE FROM generated_titles WHERE thread_id = ?").run(
+        thread.id,
+      );
+      db.prepare(
+        "INSERT OR IGNORE INTO deleted_title_threads (thread_id) VALUES (?)",
+      ).run(thread.id);
+    })();
     bb.realtime.publish("titles", {});
   });
   const settings = bb.settings.define({
@@ -208,10 +205,9 @@ ${JSON.stringify(tasks)}`;
             !isAutomaticTitle(current)
           )
             continue;
-          db.prepare(
-            "UPDATE generated_titles SET generated = ?, error = NULL, updated_at = ? WHERE thread_id = ?",
-          ).run(row.title, Date.now(), row.id);
-          changed++;
+          changed += db.prepare(
+            "UPDATE generated_titles SET generated = ?, error = NULL, updated_at = ? WHERE thread_id = ? AND generated IS NULL",
+          ).run(row.title, Date.now(), row.id).changes;
         }
         bb.realtime.publish("titles", {});
         return { changed };
@@ -249,12 +245,32 @@ ${JSON.stringify(tasks)}`;
       }
     },
   });
-  const list = () => ({
+  const list = (threadIds: readonly string[]) => ({
     rows: db
       .prepare(
-        "SELECT thread_id AS threadId, original, generated FROM generated_titles WHERE generated IS NOT NULL ORDER BY updated_at DESC LIMIT 500",
+        "SELECT thread_id AS threadId, original, generated FROM generated_titles WHERE generated IS NOT NULL AND thread_id IN (SELECT value FROM json_each(?))",
       )
-      .all() as { threadId: string; original: string; generated: string }[],
+      .all(JSON.stringify(threadIds)) as { threadId: string; original: string; generated: string }[],
   });
-  return { run, status, list };
+  const saveStepTitle = db.prepare(
+    `INSERT INTO generated_titles (thread_id, original, generated, updated_at)
+    SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM deleted_title_threads WHERE thread_id = ?)
+    ON CONFLICT(thread_id) DO UPDATE SET original = excluded.original, generated = excluded.generated,
+      updated_at = excluded.updated_at, error = NULL
+    WHERE generated IS NOT excluded.generated OR original IS NOT excluded.original`,
+  );
+  function saveStepTitles(
+    rows: { threadId: string; original: string; title: string; at: number }[],
+  ) {
+    const changed = db.transaction(() =>
+      rows.reduce(
+        (sum, row) =>
+          sum + saveStepTitle.run(row.threadId, row.original, row.title, row.at, row.threadId).changes,
+        0,
+      ),
+    )();
+    if (changed) bb.realtime.publish("titles", {});
+    return changed;
+  }
+  return { run, status, list, saveStepTitles };
 }

@@ -17,6 +17,7 @@ import type {
   PluginThreadActionEntry,
   PluginThreadListProps,
 } from "@get-bb/plugin-sdk";
+import { toast } from "sonner";
 import { project } from "./test-fixtures";
 import { dragAutoScrollSpeed } from "./useDragAutoScroll";
 
@@ -659,6 +660,7 @@ describe("row context menu", async () => {
       "Open in split",
       "Mark unread",
       "Pin",
+      "Regenerate title",
       "Settle thread",
       "Snooze until tomorrow",
       "Move up",
@@ -756,6 +758,134 @@ describe("row context menu", async () => {
         { method: "threads.markRead", args: [{ threadId: "thr_api" }] },
       ]),
     );
+  });
+});
+
+describe("regenerate title", async () => {
+  const openMenu = async (title: string) => {
+    fireEvent.contextMenu(await screen.findByText(title));
+    return await screen.findByRole("menu", { name: "Thread actions" });
+  };
+
+  it("asks bb once for a new title", async () => {
+    const rendered = await render(
+      [thread({ id: "thr_title", title: "Old title" })],
+      undefined,
+      undefined,
+      {
+        sdk: {
+          threads: {
+            experimental_regenerateTitle: async () => ({}) as never,
+          },
+        },
+      },
+    );
+    fireEvent.click(
+      within(await openMenu("Old title")).getByRole("menuitem", {
+        name: "Regenerate title",
+      }),
+    );
+    await waitFor(() =>
+      expect(rendered.sdkCalls).toEqual([
+        {
+          method: "threads.experimental_regenerateTitle",
+          args: [{ threadId: "thr_title" }],
+        },
+      ]),
+    );
+  });
+
+  it("keeps the old title muted and the item disabled while bb works", async () => {
+    let finish: () => void = () => {};
+    const rendered = await render(
+      [thread({ id: "thr_wait", title: "Old title" })],
+      undefined,
+      undefined,
+      {
+        sdk: {
+          threads: {
+            experimental_regenerateTitle: () =>
+              new Promise((resolve) => {
+                finish = () => resolve({} as never);
+              }),
+          },
+        },
+      },
+    );
+    fireEvent.click(
+      within(await openMenu("Old title")).getByRole("menuitem", {
+        name: "Regenerate title",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Old title").className).toContain(
+        "text-muted-foreground",
+      ),
+    );
+    const busy = within(await openMenu("Old title")).getByRole("menuitem", {
+      name: "Regenerating…",
+    });
+    expect(busy.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(busy);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    finish();
+    await waitFor(() =>
+      expect(screen.getByText("Old title").className).not.toContain(
+        "text-muted-foreground",
+      ),
+    );
+    expect(rendered.sdkCalls).toHaveLength(1);
+  });
+
+  it("shows an error toast and offers the item again when bb fails", async () => {
+    const error = vi.spyOn(toast, "error");
+    await render(
+      [thread({ id: "thr_fail", title: "Old title" })],
+      undefined,
+      undefined,
+      {
+        sdk: {
+          threads: {
+            experimental_regenerateTitle: async () => {
+              throw new Error("No title service");
+            },
+          },
+        },
+      },
+    );
+    fireEvent.click(
+      within(await openMenu("Old title")).getByRole("menuitem", {
+        name: "Regenerate title",
+      }),
+    );
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        "Could not regenerate the title. Try again.",
+      ),
+    );
+    const item = within(await openMenu("Old title")).getByRole("menuitem", {
+      name: "Regenerate title",
+    });
+    expect(item.getAttribute("aria-disabled")).toBeNull();
+    expect(screen.getByText("Old title").className).not.toContain(
+      "text-muted-foreground",
+    );
+    error.mockRestore();
+  });
+
+  it("is not offered on a board worker thread", async () => {
+    await render([
+      thread({
+        id: "thr_worker",
+        title: "Workflow TDD [env_58xxv6nf3t:tdd:1795162300141]",
+        originPluginId: "treelanes",
+      }),
+    ]);
+    const menu = await openMenu(
+      "Workflow TDD [env_58xxv6nf3t:tdd:1795162300141]",
+    );
+    expect(within(menu).getByText("Pin")).toBeDefined();
+    expect(within(menu).queryByText("Regenerate title")).toBeNull();
   });
 });
 

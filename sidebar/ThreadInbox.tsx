@@ -39,7 +39,7 @@ export function ThreadInbox({
   onNavigate,
   searchQuery,
 }: PluginThreadListProps) {
-  const { status, threads, projects } = useThreads();
+  const { status, threads, projects, boardWorkers } = useThreads();
   const lifecycle = useLifecycle(threads);
   const order = useThreadOrder();
   const saved = useGroups();
@@ -189,6 +189,7 @@ export function ThreadInbox({
         projectName={projectNames.get(thread.projectId) ?? null}
         isActive={activeThreadId === thread.id}
         compact={!isMain}
+        canRegenerateTitle={!boardWorkers.has(thread.id)}
         now={now}
         canPark={lifecycle.canPark(thread)}
         shelf={shelf}

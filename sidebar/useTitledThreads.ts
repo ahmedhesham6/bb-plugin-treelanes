@@ -6,7 +6,12 @@ import {
   useRealtimeConnectionState,
 } from "@get-bb/plugin-sdk/app";
 import type { sidebarRpcContract } from "./server";
-import { withGeneratedTitle, type GeneratedTitle } from "./display-title";
+import {
+  TITLE_BATCH,
+  isAutomaticTitle,
+  withGeneratedTitle,
+  type GeneratedTitle,
+} from "./display-title";
 
 let cached: GeneratedTitle[] = [];
 export function useTitledThreads() {
@@ -15,17 +20,33 @@ export function useTitledThreads() {
   const connection = useRealtimeConnectionState();
   const [titles, setTitles] = useState(cached);
   const seq = useRef(0);
+  const workerIds = useMemo(
+    () =>
+      source.threads
+        .filter(isAutomaticTitle)
+        .map((thread) => thread.id)
+        .sort(),
+    [source.threads],
+  );
+  const workerKey = workerIds.join(" ");
   const refresh = useCallback(async () => {
     const request = ++seq.current;
     try {
-      const result = await rpc.call("listTitles", {});
+      const ids = workerKey ? workerKey.split(" ") : [];
+      const rows: GeneratedTitle[] = [];
+      for (let start = 0; start < ids.length; start += TITLE_BATCH) {
+        const result = await rpc.call("listTitles", {
+          threadIds: ids.slice(start, start + TITLE_BATCH),
+        });
+        rows.push(...result.rows);
+      }
       if (request !== seq.current) return;
-      cached = result.rows;
-      setTitles(result.rows);
+      cached = rows;
+      setTitles(rows);
     } catch {
       /* Names are optional. Keep the current list on a connection error. */
     }
-  }, [rpc]);
+  }, [rpc, workerKey]);
   useEffect(() => {
     if (connection === "connected") void refresh();
     return () => {
@@ -41,5 +62,6 @@ export function useTitledThreads() {
       withGeneratedTitle(thread, byId.get(thread.id)),
     );
   }, [source.threads, titles]);
-  return { ...source, threads };
+  const boardWorkers = useMemo(() => new Set(workerIds), [workerIds]);
+  return { ...source, threads, boardWorkers };
 }

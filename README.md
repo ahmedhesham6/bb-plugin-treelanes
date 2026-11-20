@@ -161,8 +161,10 @@ threads, and unread counts. The sidebar reveals hidden agent children in the
 same Git Worktree when they link to a visible thread. Internal plugin threads
 stay hidden. Grouping keeps parent links.
 
-Use the row menu for split, read state, pin, archive, delete, settle, snooze,
-restore, or "Use as main thread". Drag a main row to move its worktree. Drag a
+Use the row menu for split, read state, pin, regenerate title, archive,
+delete, settle, snooze, restore, or "Use as main thread". A board worker row
+shows its Setup Step title in place of its run name, and its menu has no
+"Regenerate title", because the board finds runs by that name. Drag a main row to move its worktree. Drag a
 child to change its order within that worktree. Focus the drag handle and use
 arrow keys for keyboard movement.
 
@@ -204,7 +206,7 @@ Open Settings → Plugins → Treelanes.
   default.
 - **Automatic subthread titles**: off by default. When on, the harness and
   model from the task map's titles row write short sidebar titles in a short
-  hidden thread. Custom names stay.
+  hidden thread. Custom names and Setup Step titles stay.
 
 ## CLI
 
