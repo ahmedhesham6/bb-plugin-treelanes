@@ -171,7 +171,7 @@ export function RowMenuButton({
           type="button"
           aria-label={`Actions for ${props.thread.title ?? props.thread.titleFallback ?? "thread"}`}
           title="Thread actions"
-          className="pointer-events-auto grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11"
+          className="pointer-events-auto grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring relative pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']"
         >
           <Icon name="MoreHorizontal" aria-hidden="true" className="size-4" />
         </button>

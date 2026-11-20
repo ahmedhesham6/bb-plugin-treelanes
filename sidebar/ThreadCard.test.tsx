@@ -185,6 +185,25 @@ describe("Worktree Card layout", () => {
     }
   });
 
+  it("gives touch screens larger tap areas without growing a card's controls", async () => {
+    mountCard([
+      fixture("main", "env"),
+      fixture("child", "env", { parentThreadId: "main" }),
+    ]);
+    const { item } = await findCard();
+    const controls = [
+      within(item).getByRole("button", { name: /Expand|Collapse/ }),
+      within(item).getByRole("button", { name: /actions/i }),
+    ];
+    for (const control of controls) {
+      const classes = control.className.split(" ");
+      expect(classes).not.toContain("pointer-coarse:h-11");
+      expect(classes).not.toContain("pointer-coarse:size-11");
+      expect(classes).not.toContain("pointer-coarse:min-h-11");
+      expect(classes).toContain("pointer-coarse:after:absolute");
+    }
+  });
+
   it("drops line 3 and moves the agent glyph up to the title when there is no branch, machine or PR", async () => {
     mountCard([fixture("main", null, { providerId: "claude-code" })]);
     const { item, line } = await findCard();
