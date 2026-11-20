@@ -38,7 +38,6 @@ export function ThreadInbox({
   activeThreadId,
   onNavigate,
   searchQuery,
-  Original,
 }: PluginThreadListProps) {
   const { status, threads, projects } = useThreads();
   const lifecycle = useLifecycle(threads);
@@ -352,12 +351,9 @@ export function ThreadInbox({
     order.status === "error"
   )
     return (
-      <>
-        <p role="alert" className="px-3 py-2 text-xs">
-          Could not load Treelanes. Showing BB's list.
-        </p>
-        <Original />
-      </>
+      <p role="alert" className="px-3 py-2 text-xs">
+        Could not load Treelanes.
+      </p>
     );
   const ready =
     status === "ready" &&

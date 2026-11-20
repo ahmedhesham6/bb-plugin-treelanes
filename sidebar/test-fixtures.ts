@@ -1,4 +1,18 @@
-import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
+import type {
+  PluginSidebarProject,
+  PluginSidebarThread,
+} from "@get-bb/plugin-sdk";
+
+export function project(id: string, name: string): PluginSidebarProject {
+  return {
+    id,
+    name,
+    isPersonal: false,
+    href: `/projects/${id}`,
+    settingsHref: `/projects/${id}/settings`,
+  };
+}
+
 export function fixture(
   id: string,
   env: string | null = "env",
@@ -20,7 +34,6 @@ export function fixture(
       backgroundAgents: 0,
       backgroundCommands: 0,
       planMode: 0,
-      goals: 0,
     },
     indicator: "none",
     indicatorLabel: null,
@@ -32,6 +45,8 @@ export function fixture(
           id: env,
           name: env,
           branchName: "same-branch",
+          path: `/worktrees/${env}`,
+          isWorktree: true,
           providerId: null,
           workspaceDisplayKind: "managed-worktree",
         }
@@ -41,6 +56,18 @@ export function fixture(
     updatedAt: 1,
     lastReadAt: null,
     latestAttentionAt: 0,
+    displayTitle: id,
+    lifecycleOwnerThreadId: null,
+    parentNotifications: "auto",
+    sourceThreadId: null,
+    status: "idle",
+    runtimeStatus: "idle",
+    queuedWork: "none",
+    pinnedAt: null,
+    pinSortKey: null,
+    archivedAt: null,
+    href: `/projects/project/threads/${id}`,
+    isHidden: false,
     ...overrides,
   };
 }

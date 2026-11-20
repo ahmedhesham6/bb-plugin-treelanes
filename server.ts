@@ -104,10 +104,8 @@ const newThreadRequestSchema = z.custom<NewThreadRequest>((value) => {
 const composerDefaultsOutputSchema = z.object({
   providerId: z.string(),
   model: z.string().optional(),
-  serviceTier: z.enum(["default", "fast"]).optional(),
-  reasoningLevel: z
-    .enum(["none", "low", "medium", "high", "xhigh", "ultracode", "max", "ultra"])
-    .optional(),
+  serviceTier: z.string().optional(),
+  reasoningLevel: z.string().optional(),
   permissionMode: z.enum(["full", "auto", "accept-edits"]).optional(),
 });
 
@@ -179,7 +177,6 @@ type ThreadRow = {
     activeBackgroundAgentCount: number;
     activeBackgroundCommandCount: number;
     activePlanModeCount: number;
-    activeGoalCount: number;
   };
   createdAt: number;
   updatedAt: number;

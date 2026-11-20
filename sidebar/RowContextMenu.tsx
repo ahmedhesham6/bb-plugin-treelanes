@@ -2,11 +2,19 @@ import type { ReactNode } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
-  experimental_useSidebarThreadActions as useActions,
+  experimental_useThreadActions as useThreadActions,
+  useBbNavigate,
+  useSdk,
   type PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
+import { toast } from "sonner";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
+import { toThreadActionTarget } from "./threadActionTarget";
+
+const ARCHIVE = "bb--core/archive";
+const DELETE = "bb--core/delete";
+const LIFECYCLE_KEYS = [ARCHIVE, DELETE];
 
 interface Props {
   thread: PluginSidebarThread;
@@ -28,19 +36,46 @@ function useItems({
   onRestore,
   restoreLabel,
 }: Props) {
-  const actions = useActions();
+  const navigate = useBbNavigate();
+  const sdk = useSdk();
+  // bb owns archive and delete. Its thread actions hold the confirmations,
+  // so the plugin runs them and does not call the API for these two.
+  const lifecycle = useThreadActions(toThreadActionTarget(thread), {
+    keys: LIFECYCLE_KEYS,
+  });
+  // bb leaves an action out while it cannot run it, so the item is left out
+  // too. An item that does nothing is worse than no item.
+  const lifecycleItem = (key: string, label: string, separator?: boolean) => {
+    const entry = lifecycle.find((candidate) => candidate.key === key);
+    return entry
+      ? [{ label, separator, run: () => void entry.action.run() }]
+      : [];
+  };
+  const update = (request: Promise<unknown>) =>
+    void request.catch(() =>
+      toast.error("Could not update the thread. Try again."),
+    );
+  const args = { threadId: thread.id };
   return [
     {
       label: "Open in split",
-      run: () => actions.open(thread.id, { split: true }),
+      run: () => navigate.toThread(thread.id, { split: true }),
     },
     {
       label: thread.isUnread ? "Mark read" : "Mark unread",
-      run: () => void actions.setRead(thread.id, thread.isUnread),
+      run: () =>
+        update(
+          thread.isUnread
+            ? sdk.threads.markRead(args)
+            : sdk.threads.markUnread(args),
+        ),
     },
     {
       label: thread.isPinned ? "Unpin" : "Pin",
-      run: () => void actions.setPinned(thread.id, !thread.isPinned),
+      run: () =>
+        update(
+          thread.isPinned ? sdk.threads.unpin(args) : sdk.threads.pin(args),
+        ),
     },
     ...(onMakeMain ? [{ label: "Use as main thread", run: onMakeMain }] : []),
     ...(onSettle
@@ -62,12 +97,8 @@ function useItems({
           { label: "Move down", run: () => onMove(1) },
         ]
       : []),
-    {
-      label: "Archive",
-      separator: true,
-      run: () => actions.archive(thread.id),
-    },
-    { label: "Delete", run: () => actions.requestDelete(thread.id) },
+    ...lifecycleItem(ARCHIVE, "Archive", true),
+    ...lifecycleItem(DELETE, "Delete"),
   ] as { label: string; run: () => void; separator?: boolean }[];
 }
 const menuClass =

@@ -21,7 +21,7 @@ function worktreeThread(
     environmentName: values.environmentName ?? "board-worktree",
     environmentBranchName: values.environmentBranchName ?? "feat/board",
     environmentWorkspaceDisplayKind: "managed-worktree" as const,
-    activity: { activeWorkflowCount: 0, activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 0, activePlanModeCount: 0, activeGoalCount: 0 },
+    activity: { activeWorkflowCount: 0, activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 0, activePlanModeCount: 0 },
   };
 }
 
@@ -1294,7 +1294,7 @@ describe("Board backend", () => {
     const thread = {
       ...worktreeThread({ id: "thread-one", projectId: "project-one", status: reason === "active" ? "active" : "idle" }),
       hasPendingInteraction: reason === "question",
-      ...(reason === "background" ? { activity: { activeWorkflowCount: 0, activeBackgroundAgentCount: 1, activeBackgroundCommandCount: 0, activePlanModeCount: 0, activeGoalCount: 0 } } : {}),
+      ...(reason === "background" ? { activity: { activeWorkflowCount: 0, activeBackgroundAgentCount: 1, activeBackgroundCommandCount: 0, activePlanModeCount: 0 } } : {}),
       ...(reason === "outside" ? { environmentWorkspaceDisplayKind: "other" as const } : {}),
     };
     const sdk = sdkFor([]);

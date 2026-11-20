@@ -129,7 +129,6 @@ describe("parking guard", () => {
     "background",
     "command",
     "plan",
-    "goal",
   ])("refuses parking when a thread has %s work", async (reason) => {
     const h = setup();
     const keys = {
@@ -137,14 +136,12 @@ describe("parking guard", () => {
       background: "activeBackgroundAgentCount",
       command: "activeBackgroundCommandCount",
       plan: "activePlanModeCount",
-      goal: "activeGoalCount",
     };
     const activity = {
       activeWorkflowCount: 0,
       activeBackgroundAgentCount: 0,
       activeBackgroundCommandCount: 0,
       activePlanModeCount: 0,
-      activeGoalCount: 0,
     };
     if (reason in keys)
       activity[keys[reason as keyof typeof keys] as keyof typeof activity] = 1;
