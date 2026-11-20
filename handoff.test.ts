@@ -1800,3 +1800,137 @@ describe("board holds and gates", () => {
     expect(lists.length).toBeLessThanOrEqual(2);
   });
 });
+
+describe("Setup Step titles", () => {
+  type TitleRow = { threadId: string; original: string; generated: string };
+  const stepTitles = { tdd: "Write the failing tests", quality: "Review the retry window", simplify: "Trim the retry code", pr: "Open the pull request" };
+  let threadIds: () => string[] = () => [];
+  const titles = async (harness: { behavior: { callRpc(method: string, input: unknown): Promise<unknown> } }) =>
+    ((await harness.behavior.callRpc("listTitles", { threadIds: threadIds() })) as { rows: TitleRow[] }).rows
+      .map(({ threadId, original, generated }) => ({ threadId, original, generated }))
+      .sort((a, b) => a.threadId.localeCompare(b.threadId));
+  async function launched() {
+    const t = await setup(false);
+    await t.harness.behavior.callAgentTool("treelanes_deliver", { stage: "tdd", task: { ...t.task, deliveryTarget: "pr" } }, t.agent);
+    const planner = { ...t.agent, threadId: t.threads[1]!.id };
+    const steps = Object.entries(stepTitles).map(([stage, title]) => ({ id: stage, title, stage,
+      instructions: "Complete and check", checks: ["API regression"],
+      execution: { providerId: "codex", model: "small", reasoningLevel: "low", skills: [], reason: "Bounded work" } }));
+    await t.harness.behavior.callAgentTool("treelanes_apply_setup", { setup: { summary: "Titled flow", steps } }, planner);
+    await t.harness.behavior.runSchedule("reconcile-worktrees");
+    threadIds = () => [...t.threads.map(thread => thread.id), "other"];
+    return t;
+  }
+  async function completeStep(t: Awaited<ReturnType<typeof setup>>, stage: string) {
+    const worker = t.threads.at(-1)!;
+    const ctx = await t.context();
+    await t.harness.behavior.callAgentTool("treelanes_complete_stage", { ...await t.receipt(), stage,
+      taskRevision: ctx.taskRevision, stageUpdatedAt: ctx.stageUpdatedAt }, { ...t.agent, threadId: worker.id });
+    await t.harness.behavior.emitThreadEvent("thread.idle", { thread: worker, lastAssistantText: "Checks complete" });
+  }
+
+  it("gives each launched worker its Setup Step title as Display Title and keeps the run name", async () => {
+    const t = await launched();
+    const tdd = t.threads.at(-1)!;
+    expect(tdd.title).toMatch(/^Workflow TDD \[env:tdd:\d+\]$/);
+    expect(await titles(t.harness)).toEqual([{ threadId: tdd.id, original: tdd.title, generated: stepTitles.tdd }]);
+    await completeStep(t, "tdd");
+    const quality = t.threads.at(-1)!;
+    expect(quality.id).not.toBe(tdd.id);
+    expect(await titles(t.harness)).toEqual([
+      { threadId: tdd.id, original: tdd.title, generated: stepTitles.tdd },
+      { threadId: quality.id, original: quality.title, generated: stepTitles.quality },
+    ]);
+    expect(tdd.title).toMatch(/^Workflow TDD \[env:tdd:\d+\]$/);
+    expect(t.harness.sdk.callsTo("threads.update")).toEqual([]);
+    expect(t.harness.sdk.callsTo("threads.spawn").filter(([request]) => (request as { visibility?: string }).visibility === "hidden")).toEqual([]);
+  });
+
+  it("backfills missing titles for existing launches on start-up, once", async () => {
+    const t = await launched();
+    await completeStep(t, "tdd");
+    const [tdd, quality] = t.threads.slice(-2);
+    t.bb.storage.database().exec("DELETE FROM generated_titles");
+    const next = await t.harness.lifecycle.reload(plugin);
+    disposals.push(() => next.harness.lifecycle.dispose());
+    const expected = [
+      { threadId: tdd!.id, original: tdd!.title, generated: stepTitles.tdd },
+      { threadId: quality!.id, original: quality!.title, generated: stepTitles.quality },
+    ];
+    expect(await titles(next.harness)).toEqual(expected);
+    expect(next.harness.inspection.realtimeSignals.some(signal => signal.channel === "titles")).toBe(true);
+    const stored = (host: typeof next) => host.bb.storage.database().prepare("SELECT * FROM generated_titles ORDER BY thread_id").all();
+    const first = stored(next);
+    const again = await next.harness.lifecycle.reload(plugin);
+    disposals.push(() => again.harness.lifecycle.dispose());
+    expect(await titles(again.harness)).toEqual(expected);
+    expect(stored(again)).toEqual(first);
+    expect(again.harness.inspection.realtimeSignals.filter(signal => signal.channel === "titles")).toEqual([]);
+  });
+
+  it("puts a step title in place of a model title, but keeps a model title where no step title exists", async () => {
+    const t = await launched();
+    const worker = t.threads.at(-1)!;
+    const db = t.bb.storage.database();
+    db.prepare("UPDATE generated_titles SET generated = 'Model title' WHERE thread_id = ?").run(worker.id);
+    db.prepare("INSERT INTO generated_titles (thread_id, original, generated, updated_at) VALUES ('other', 'Workflow TDD [env:tdd:1]', 'Model only', 1)").run();
+    const next = await t.harness.lifecycle.reload(plugin);
+    disposals.push(() => next.harness.lifecycle.dispose());
+    expect(await titles(next.harness)).toEqual([
+      { threadId: "other", original: "Workflow TDD [env:tdd:1]", generated: "Model only" },
+      { threadId: worker.id, original: worker.title, generated: stepTitles.tdd },
+    ]);
+  });
+
+  it("gives no Display Title to a worker launched without a Setup Step", async () => {
+    const t = await setup();
+    threadIds = () => t.threads.map(thread => thread.id);
+    await t.submit(await t.receipt());
+    await t.idle();
+    expect(t.stage()).toBe("quality");
+    expect(t.requests).toHaveLength(1);
+    expect(t.threads.at(-1)!.title).toMatch(/^Workflow Quality Loop \[env:quality:\d+\]$/);
+    expect(await titles(t.harness)).toEqual([]);
+    const next = await t.harness.lifecycle.reload(plugin);
+    disposals.push(() => next.harness.lifecycle.dispose());
+    expect(await titles(next.harness)).toEqual([]);
+  });
+
+  it("keeps a deleted worker's title gone after later launches and start-up", async () => {
+    const t = await launched();
+    const tdd = t.threads.at(-1)!;
+    await t.harness.behavior.emitThreadEvent("thread.deleted", { thread: { id: tdd.id } } as never);
+    expect(await titles(t.harness)).toEqual([]);
+    await completeStep(t, "tdd");
+    const quality = t.threads.at(-1)!;
+    expect(await titles(t.harness)).toEqual([{ threadId: quality.id, original: quality.title, generated: stepTitles.quality }]);
+    const next = await t.harness.lifecycle.reload(plugin);
+    disposals.push(() => next.harness.lifecycle.dispose());
+    expect(await titles(next.harness)).toEqual([{ threadId: quality.id, original: quality.title, generated: stepTitles.quality }]);
+  });
+
+  it("returns the title of each requested thread, however many title rows exist", async () => {
+    const t = await launched();
+    const worker = t.threads.at(-1)!;
+    const db = t.bb.storage.database();
+    db.prepare("UPDATE generated_titles SET updated_at = 0 WHERE thread_id = ?").run(worker.id);
+    const insert = db.prepare("INSERT INTO generated_titles (thread_id, original, generated, updated_at) VALUES (?, 'Workflow TDD [env:tdd:1]', 'Newer title', ?)");
+    for (let index = 0; index < 600; index++) insert.run(`newer-${index}`, Date.now() + index);
+    expect(await titles(t.harness)).toEqual([{ threadId: worker.id, original: worker.title, generated: stepTitles.tdd }]);
+    await expect(t.harness.behavior.callRpc("listTitles", { threadIds: Array.from({ length: 501 }, (_, index) => `id-${index}`) }))
+      .rejects.toThrow("rpc input validation failed");
+  });
+
+  it("skips a launch whose saved task cannot be read and keeps the other titles", async () => {
+    const t = await launched();
+    await completeStep(t, "tdd");
+    const [tdd, quality] = t.threads.slice(-2);
+    const db = t.bb.storage.database();
+    const result = db.prepare("SELECT task_revision FROM worktree_stage_results WHERE thread_id = ?").get(tdd!.id) as { task_revision: number };
+    db.prepare("UPDATE worktree_task_versions SET context_json = '{broken' WHERE revision = ?").run(result.task_revision);
+    db.exec("DELETE FROM generated_titles");
+    const next = await t.harness.lifecycle.reload(plugin);
+    disposals.push(() => next.harness.lifecycle.dispose());
+    expect(await titles(next.harness)).toEqual([{ threadId: quality!.id, original: quality!.title, generated: stepTitles.quality }]);
+  });
+});

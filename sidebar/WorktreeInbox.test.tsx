@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { toast } from "sonner";
 import { fixture, project } from "./test-fixtures";
@@ -218,6 +218,7 @@ it("shows Luna titles, the agent spinner, a group running dot, and child PR link
     fixture("child", "env", {
       parentThreadId: "main",
       title: "Workflow TDD [env_abc:tdd:1]",
+      originPluginId: "treelanes",
       indicator: "runtime",
       indicatorLabel: "Agent running",
     }),
@@ -285,4 +286,189 @@ it("shows Luna titles, the agent spinner, a group running dot, and child PR link
     ),
   ).toBe(true);
   expect(source[1].title).toBe("Workflow TDD [env_abc:tdd:1]");
+});
+
+function mountWorktree(
+  source: ReturnType<typeof fixture>[],
+  titles: { threadId: string; original: string; generated: string }[] = [],
+  activeThreadId = "main",
+) {
+  return renderSlot(
+    slot,
+    { ...props, activeThreadId },
+    {
+      sidebarThreads: {
+        status: "ready",
+        threads: source,
+        projects: [project("project", "Project")],
+      },
+      rpc: {
+        listGroups: () => ({
+          mains: [
+            { projectId: "project", environmentId: "env", threadId: "main" },
+          ],
+          preferred: [],
+          order: [],
+        }),
+        listOrder: () => ({ rows: [] }),
+        listLifecycle: () => ({ rows: [] }),
+        listTitles: () => ({ rows: titles }),
+      },
+    },
+  );
+}
+const follows = (earlier: Element, later: Element) =>
+  Boolean(
+    earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING,
+  );
+
+it("shows a board worker's Setup Step title without offering Regenerate title", async () => {
+  const runName = "Workflow TDD [env_58xxv6nf3t:tdd:1795162300141]";
+  const view = mountWorktree(
+    [
+      fixture("main", "env"),
+      fixture("worker", "env", {
+        parentThreadId: "main",
+        title: runName,
+        originPluginId: "treelanes",
+      }),
+    ],
+    [{ threadId: "worker", original: runName, generated: "Write the failing tests" }],
+  );
+  expect(
+    await screen.findByRole("link", { name: "Write the failing tests" }),
+  ).toBeDefined();
+  expect(screen.queryByText(runName)).toBeNull();
+  expect(view.rpcCalls.filter((call) => call.method === "listTitles")).toEqual([
+    { method: "listTitles", input: { threadIds: ["worker"] } },
+  ]);
+  fireEvent.contextMenu(await screen.findByText("Write the failing tests"));
+  const menu = await screen.findByRole("menu", { name: "Thread actions" });
+  expect(within(menu).getByText("Pin")).toBeDefined();
+  expect(within(menu).queryByText("Regenerate title")).toBeNull();
+});
+
+it("shows a human rename of a board worker instead of its Setup Step title", async () => {
+  mountWorktree(
+    [
+      fixture("main", "env"),
+      fixture("worker", "env", {
+        parentThreadId: "main",
+        title: "My own name",
+        originPluginId: "treelanes",
+      }),
+    ],
+    [
+      {
+        threadId: "worker",
+        original: "Workflow TDD [env_58xxv6nf3t:tdd:1795162300141]",
+        generated: "Write the failing tests",
+      },
+    ],
+  );
+  expect(await screen.findByRole("link", { name: "My own name" })).toBeDefined();
+  expect(screen.queryByText("Write the failing tests")).toBeNull();
+});
+
+it("lays out a Child Row on one line: title, time, then the agent glyph", async () => {
+  mountWorktree([
+    fixture("main", "env"),
+    fixture("child", "env", {
+      parentThreadId: "main",
+      title: "A long child thread title",
+      providerId: "claude-code",
+      updatedAt: Date.now() - (3 * 3_600_000 + 60_000),
+    }),
+  ]);
+  const link = await screen.findByRole("link", {
+    name: "A long child thread title",
+  });
+  const item = link.closest("li")!;
+  const title = within(item).getByText("A long child thread title");
+  const time = within(item).getByText("3h");
+  const glyph = within(item).getByRole("img", { name: "Claude Code" });
+  expect(title.className).toContain("truncate");
+  expect(title.className).not.toContain("line-clamp");
+  expect(follows(title, time)).toBe(true);
+  expect(follows(time, glyph)).toBe(true);
+  expect(glyph.closest(".sr-only")).toBeNull();
+  expect(glyph.getAttribute("class")).toContain("size-3.5");
+  expect(glyph.getAttribute("class")).toContain("opacity-60");
+  const line = title.parentElement!;
+  expect(line.contains(time)).toBe(true);
+  expect(line.contains(glyph)).toBe(true);
+  const button = within(item).getByRole("button", {
+    name: "Actions for A long child thread title",
+  });
+  expect(line.contains(button)).toBe(true);
+  expect(button.closest("[hidden], [aria-hidden='true'], .invisible, .hidden")).toBeNull();
+  button.focus();
+  expect(document.activeElement).toBe(button);
+});
+
+it("puts the agent glyph at the far right of a Worktree Card's meta line", async () => {
+  mountWorktree(
+    [
+      fixture("main", "env", { providerId: "claude-code" }),
+      fixture("child", "env", { parentThreadId: "main", providerId: "codex" }),
+    ],
+    [],
+    "elsewhere",
+  );
+  const link = await screen.findByRole("link", { name: "main" });
+  const item = link.closest("li")!;
+  const meta = within(item).getByText("same-branch");
+  const toggle = within(item).getByRole("button", { name: "Expand main" });
+  const glyph = within(item).getByRole("img", { name: "Claude Code" });
+  expect(toggle.textContent).toContain("2 threads");
+  expect(follows(meta, toggle)).toBe(true);
+  expect(follows(toggle, glyph)).toBe(true);
+  expect(meta.closest(".truncate")).not.toBeNull();
+  expect(glyph.getAttribute("class")).toContain("size-3.5");
+  expect(glyph.getAttribute("class")).toContain("opacity-60");
+});
+
+it("asks for the titles of every board worker in bounded batches", async () => {
+  const workers = Array.from({ length: 501 }, (_, index) =>
+    fixture(`worker-${String(index).padStart(3, "0")}`, "env", {
+      parentThreadId: "main",
+      title: `Workflow TDD [env_abc:tdd:${index}]`,
+      originPluginId: "treelanes",
+    }),
+  );
+  const view = mountWorktree(
+    [fixture("main", "env"), fixture("own", "env", { parentThreadId: "main" }), ...workers],
+    [],
+    "elsewhere",
+  );
+  await waitFor(() =>
+    expect(view.rpcCalls.filter((call) => call.method === "listTitles")).toHaveLength(2),
+  );
+  const batches = view.rpcCalls
+    .filter((call) => call.method === "listTitles")
+    .map((call) => (call.input as { threadIds: string[] }).threadIds);
+  expect(batches.map((ids) => ids.length)).toEqual([500, 1]);
+  expect(batches.flat().sort()).toEqual(workers.map((worker) => worker.id));
+});
+
+it("keeps a Child Row's menu button shown while its menu is open", async () => {
+  mountWorktree([
+    fixture("main", "env"),
+    fixture("child", "env", {
+      parentThreadId: "main",
+      updatedAt: Date.now() - (3 * 3_600_000 + 60_000),
+    }),
+  ]);
+  const button = await screen.findByRole("button", { name: "Actions for child" });
+  const time = screen.getByText("3h").parentElement!;
+  expect(button.parentElement!.classList.contains("opacity-0")).toBe(true);
+  fireEvent.pointerDown(button, { button: 0, ctrlKey: false });
+  await screen.findByRole("menuitem", { name: "Pin" });
+  expect(button.parentElement!.classList.contains("opacity-100")).toBe(true);
+  expect(button.parentElement!.classList.contains("opacity-0")).toBe(false);
+  expect(time.classList.contains("opacity-0")).toBe(true);
+  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  await waitFor(() =>
+    expect(button.parentElement!.classList.contains("opacity-0")).toBe(true),
+  );
 });

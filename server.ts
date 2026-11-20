@@ -448,6 +448,41 @@ export default async function plugin(bb: BbPluginApi) {
     const row = readTask.get(environmentId) as { revision: number; context_json: string } | undefined;
     return { revision: row?.revision ?? 0, task: row ? taskContextSchema.parse(JSON.parse(row.context_json)) : null };
   }
+  const readLaunchSteps = db.prepare(`
+    SELECT l.environment_id, l.stage, l.stage_updated_at, l.thread_id, c.active_step_id AS card_step_id,
+      r.step_id AS result_step_id, v.context_json AS result_task_json
+    FROM worktree_stage_thread_launches l
+    LEFT JOIN worktree_cards c ON c.environment_id = l.environment_id AND c.updated_at = l.stage_updated_at
+    LEFT JOIN worktree_stage_results r ON r.environment_id = l.environment_id AND r.stage_updated_at = l.stage_updated_at
+    LEFT JOIN worktree_task_versions v ON v.environment_id = r.environment_id AND v.revision = r.task_revision
+    WHERE l.thread_id IS NOT NULL AND (? IS NULL OR l.environment_id = ?)
+    ORDER BY l.stage_updated_at`);
+  function saveStepTitles(environmentId: string | null) {
+    try {
+      const rows = readLaunchSteps.all(environmentId, environmentId) as Array<{ environment_id: string; stage: string; stage_updated_at: number;
+        thread_id: string; card_step_id: string | null; result_step_id: string | null; result_task_json: string | null }>;
+      const byThread = new Map<string, { threadId: string; original: string; title: string | null; at: number }>();
+      const setupFrom = (json: string | null | undefined) => {
+        try {
+          return json ? taskContextSchema.safeParse(JSON.parse(json)).data?.setup : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      for (const row of rows) {
+        const setup = setupFrom(row.result_step_id ? row.result_task_json
+          : row.card_step_id ? (readTask.get(row.environment_id) as { context_json: string } | undefined)?.context_json : null);
+        const step = activeSetupStep(setup, row.result_step_id ?? row.card_step_id);
+        const prior = byThread.get(row.thread_id);
+        byThread.set(row.thread_id, { threadId: row.thread_id, at: row.stage_updated_at, title: step?.title ?? prior?.title ?? null,
+          original: prior?.original ?? launchTitle(row.environment_id, row.stage, row.stage_updated_at) });
+      }
+      sidebarState.titles.saveStepTitles([...byThread.values()].flatMap(row => row.title ? [{ ...row, title: row.title }] : []));
+    } catch (error) {
+      bb.log.warn(`Setup Step titles: ${error instanceof Error ? error.message : "failed"}`);
+    }
+  }
+  saveStepTitles(null);
   const threadRetry = createThreadRetry(bb, db, () => disposed);
   const stageContinuation = createStageContinuation(bb, db, () => disposed);
   const tddRepair = createTddRepair(bb, db, () => disposed);
@@ -726,6 +761,7 @@ export default async function plugin(bb: BbPluginApi) {
       const thread = liveWorker ?? await startStageThread(environmentId, prompt, stage, stageUpdatedAt, open);
       saveStageThreadLaunch.run(environmentId, stage, stageUpdatedAt, "started", thread.id);
       setOwner.run(thread.id, environmentId, stageUpdatedAt);
+      saveStepTitles(environmentId);
       return thread;
     })();
     stageThreadStarts.set(startKey, start);
@@ -1385,6 +1421,7 @@ export default async function plugin(bb: BbPluginApi) {
           const orphan = threads.find(thread => thread.title === launchTitle(card.environmentId, state.stage, state.updated_at));
           if (orphan) {
             saveStageThreadLaunch.run(card.environmentId, state.stage, state.updated_at, "started", orphan.id);
+            saveStepTitles(card.environmentId);
             setOwner.run(orphan.id, card.environmentId, state.updated_at);
             state.owner_thread_id = orphan.id;
           }
@@ -1463,6 +1500,7 @@ export default async function plugin(bb: BbPluginApi) {
           if (worker) {
             saveStageThreadLaunch.run(card.environmentId, state.stage, state.updated_at, "started", worker.id);
             setOwner.run(worker.id, card.environmentId, state.updated_at);
+            saveStepTitles(card.environmentId);
             continue;
           }
           if (launch.attempt_count === 0) {

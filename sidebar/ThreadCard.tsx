@@ -1,4 +1,4 @@
-import { useRef, type DragEvent, type MouseEvent } from "react";
+import { useRef, useState, type DragEvent, type MouseEvent } from "react";
 import {
   experimental_useSidebarThreadSplit as useSplit,
   useBbNavigate,
@@ -8,7 +8,11 @@ import { RunningDot } from "./RunningDot";
 import type { groupAttentionItems } from "./groups";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
-import { RowContextMenu, RowMenuButton } from "./RowContextMenu";
+import {
+  RowContextMenu,
+  RowMenuButton,
+  useRegenerateTitle,
+} from "./RowContextMenu";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { StatusOrTime } from "./StatusSlot";
 import { threadDisplayTitle, type DropPlacement } from "./inbox";
@@ -36,6 +40,7 @@ export interface ThreadCardProps {
   onMove: (direction: -1 | 1) => void;
   now: number;
   compact?: boolean;
+  canRegenerateTitle: boolean;
   group?: {
     count: number;
     canSettle: boolean;
@@ -68,6 +73,7 @@ export function ThreadCard(props: ThreadCardProps) {
     onMove,
     now,
     compact = false,
+    canRegenerateTitle,
     group,
     onMakeMain,
     onSelect,
@@ -79,6 +85,8 @@ export function ThreadCard(props: ThreadCardProps) {
   const navigate = useBbNavigate();
   const { splitProps, layout } = useSplit(thread.id);
   const title = threadDisplayTitle(thread);
+  const regenerate = useRegenerateTitle(thread.id);
+  const [menuOpen, setMenuOpen] = useState(false);
   const open = (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
     if (dragged.current) {
@@ -102,6 +110,8 @@ export function ThreadCard(props: ThreadCardProps) {
     onSnooze: park ? () => onSnooze(tomorrow.snoozedUntil) : undefined,
     onRestore: shelf !== "active" ? onRestore : undefined,
     restoreLabel: shelf === "snoozed" ? "Wake thread now" : "Restore thread",
+    onRegenerateTitle: canRegenerateTitle ? regenerate.run : undefined,
+    regeneratingTitle: regenerate.pending,
   };
   const location = thread.environment?.branchName ?? thread.host?.name ?? "";
   return (
@@ -172,20 +182,51 @@ export function ThreadCard(props: ThreadCardProps) {
             onClick={open}
             className="absolute inset-0 cursor-pointer rounded-lg active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
-          <div className="pointer-events-none relative flex min-h-7 items-start gap-2 pointer-coarse:min-h-11">
+          <div
+            className={cn(
+              "pointer-events-none relative flex min-h-7 gap-2 pointer-coarse:min-h-11",
+              compact ? "items-center" : "items-start",
+            )}
+          >
             <span
               className={cn(
-                "min-w-0 flex-1 self-center break-words text-sm leading-5 pointer-coarse:text-base pointer-coarse:leading-6",
-                compact ? "line-clamp-2" : "line-clamp-2 font-medium",
+                "min-w-0 flex-1 self-center text-sm leading-5 pointer-coarse:text-base pointer-coarse:leading-6",
+                compact ? "truncate" : "line-clamp-2 break-words font-medium",
                 thread.isUnread && "font-semibold",
+                regenerate.pending && "text-muted-foreground",
               )}
             >
               {title}
             </span>
-            <span className="flex min-h-7 shrink-0 items-center gap-1 pointer-coarse:min-h-11">
-              <StatusOrTime thread={thread} now={now} />
-              <RowMenuButton {...menu} />
-            </span>
+            {compact ? (
+              <>
+                <PullRequest environmentId={thread.environment?.id ?? null} />
+                <span className="grid min-h-7 shrink-0 items-center justify-items-end pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:gap-1">
+                  <span
+                    className={cn(
+                      "col-start-1 row-start-1 group-hover/card:opacity-0 group-has-[:focus-visible]/card:opacity-0",
+                      menuOpen && "opacity-0",
+                    )}
+                  >
+                    <StatusOrTime thread={thread} now={now} />
+                  </span>
+                  <span
+                    className={cn(
+                      "col-start-1 row-start-1 opacity-0 group-hover/card:opacity-100 group-has-[:focus-visible]/card:opacity-100 pointer-coarse:opacity-100",
+                      menuOpen && "opacity-100",
+                    )}
+                  >
+                    <RowMenuButton {...menu} onOpenChange={setMenuOpen} />
+                  </span>
+                </span>
+                <ProviderGlyph providerId={thread.providerId} />
+              </>
+            ) : (
+              <span className="flex min-h-7 shrink-0 items-center gap-1 pointer-coarse:min-h-11">
+                <StatusOrTime thread={thread} now={now} />
+                <RowMenuButton {...menu} />
+              </span>
+            )}
           </div>
           {group && group.summary.length > 0 && (
             <p
@@ -206,7 +247,6 @@ export function ThreadCard(props: ThreadCardProps) {
           )}
           {!compact && (
             <div className="pointer-events-none relative mt-1 flex min-h-6 items-center gap-2 text-xs text-muted-foreground">
-              <ProviderGlyph providerId={thread.providerId} />
               <span
                 className="min-w-0 flex-1 truncate"
                 title={[projectName, location].filter(Boolean).join(" / ")}
@@ -239,18 +279,8 @@ export function ThreadCard(props: ThreadCardProps) {
                   />
                 </button>
               )}
-            </div>
-          )}
-          {compact && (
-            <PullRequest
-              environmentId={thread.environment?.id ?? null}
-              compact
-            />
-          )}
-          {compact && (
-            <span className="sr-only">
               <ProviderGlyph providerId={thread.providerId} />
-            </span>
+            </div>
           )}
           {Object.entries(thread.activity)
             .filter(([, n]) => n > 0)
@@ -283,13 +313,7 @@ export function ThreadCard(props: ThreadCardProps) {
   );
 }
 
-function PullRequest({
-  environmentId,
-  compact = false,
-}: {
-  environmentId: string | null;
-  compact?: boolean;
-}) {
+function PullRequest({ environmentId }: { environmentId: string | null }) {
   const pr = usePullRequest(environmentId);
   return (
     pr && (
@@ -300,7 +324,6 @@ function PullRequest({
         title={pr.title}
         className={cn(
           "pointer-events-auto relative inline-flex min-h-6 shrink-0 items-center text-xs tabular-nums hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11",
-          compact && "mt-1",
           pr.state === "merged"
             ? "text-[color:var(--pr-merged)]"
             : pr.attention === "checks_failed" || pr.attention === "conflicts"

@@ -11,7 +11,7 @@ const noFields = methods.filter(([, input]) => accepts(input, {}));
 describe("RPC input", () => {
   it("accepts a missing or null input for each method without input fields, as the bb CLI sends", () => {
     expect(noFields.map(([name]) => name).sort())
-      .toEqual(["getTaskMap", "listGroups", "listLifecycle", "listOrder", "listTitles"]);
+      .toEqual(["getTaskMap", "listGroups", "listLifecycle", "listOrder"]);
     for (const [name, input] of noFields) {
       expect(accepts(input, null), name).toBe(true);
       expect(accepts(input, undefined), name).toBe(true);
