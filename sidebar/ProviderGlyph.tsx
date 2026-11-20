@@ -11,11 +11,15 @@ import { TRAILING_GLYPH_BOX_CLASS } from "./StatusSlot";
 export function ProviderGlyph({
   providerId,
   className,
+  leading = false,
 }: {
   providerId: string;
   className?: string;
+  leading?: boolean;
 }) {
-  const shared = "size-3.5 opacity-60";
+  const shared = leading
+    ? "size-3 text-muted-foreground/70"
+    : "size-3.5 opacity-60";
   const box = cn(TRAILING_GLYPH_BOX_CLASS, className);
 
   if (providerId === "claude-code") {
