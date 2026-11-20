@@ -25,6 +25,7 @@
       "experimental_icons": {
         "mark": "./assets/icon.svg",
         "circle-dashed": "./assets/circle-dashed.svg",
+        "status-working": "./assets/status-working.svg",
         "idea": "./assets/idea.svg"
       }
     },

@@ -93,10 +93,10 @@ export function groupAttentionItems(threads: readonly PluginSidebarThread[]) {
     if (t.isUnread) unread++;
   }
   return [
-    { kind: "input", count: input, label: `${input} needs input` },
-    { kind: "failed", count: failed, label: `${failed} failed` },
-    { kind: "running", count: running, label: `${running} running` },
-    { kind: "unread", count: unread, label: `${unread} unread` },
+    { kind: "input" as const, count: input, label: `${input} needs input` },
+    { kind: "failed" as const, count: failed, label: `${failed} failed` },
+    { kind: "running" as const, count: running, label: `${running} running` },
+    { kind: "unread" as const, count: unread, label: `${unread} unread` },
   ].filter((item) => item.count > 0);
 }
 

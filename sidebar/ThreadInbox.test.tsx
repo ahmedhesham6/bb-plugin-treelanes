@@ -909,7 +909,7 @@ describe("card metadata", async () => {
         host: { id: "host_1", name: "Sawyer's MacBook" },
       }),
     ]);
-    expect(await screen.findByText("Sawyer's MacBook")).toBeDefined();
+    expect(await screen.findByTitle("Sawyer's MacBook")).toBeDefined();
   });
 
   it("prefers the branch over the machine when both exist", async () => {
@@ -943,7 +943,7 @@ describe("card metadata", async () => {
 
   // Status and age share one slot. A row that shows both puts a variable-width
   // label in the column, and no two rows line up.
-  it("replaces the age label with the status glyph while work runs", async () => {
+  it("replaces the age label with the Working status while work runs", async () => {
     await render([
       thread({
         id: "thr_run",
@@ -952,7 +952,7 @@ describe("card metadata", async () => {
         updatedAt: Date.now() - (3 * 3_600_000 + 60_000),
       }),
     ]);
-    expect(await screen.findByLabelText("Agent is working")).toBeDefined();
+    expect(await screen.findByText("Working")).toBeDefined();
     expect(screen.queryByText("3h")).toBeNull();
   });
 
@@ -970,34 +970,30 @@ describe("card metadata", async () => {
   });
 });
 
-// The three states that want the user take the slot from the age label, and
-// they use bb's own glyphs: the two lists sit in one window, and a user who
-// switches between them should not have to learn a second vocabulary.
+// The states that want the user take the card's status slot from the age label.
 describe("attention states", async () => {
   const states = [
-    ["waiting-for-input", "Thread needs user input"],
-    ["unread-error", "Unread thread failed"],
-    ["unread-success", "Unread thread succeeded"],
+    ["waiting-for-input", false, "Input"],
+    ["unread-error", true, "Failed"],
+    ["unread-success", true, "Done"],
   ] as const;
 
-  for (const [indicator, label] of states) {
-    it(`shows the ${indicator} glyph instead of the age`, async () => {
+  for (const [indicator, isUnread, label] of states) {
+    it(`shows ${label} instead of the age for ${indicator}`, async () => {
       await render([
         thread({
           id: `thr_${indicator}`,
           indicator,
-          indicatorLabel: label,
+          isUnread,
           updatedAt: Date.now() - (3 * 3_600_000 + 60_000),
         }),
       ]);
-      expect(await screen.findByLabelText(label)).toBeDefined();
+      expect(await screen.findByText(label)).toBeDefined();
       expect(screen.queryByText("3h")).toBeNull();
     });
   }
 
-  // Running work is the one state the user does NOT have to act on, so it gets
-  // the original spinner.
-  it("keeps the agent spinner while work runs", async () => {
+  it("shows Working, not Done, while an unread thread works", async () => {
     await render([
       thread({
         id: "thr_busy",
@@ -1006,8 +1002,8 @@ describe("attention states", async () => {
         indicatorLabel: "Thread working",
       }),
     ]);
-    expect(await screen.findByLabelText("Thread working")).toBeDefined();
-    expect(screen.queryByLabelText("Unread thread succeeded")).toBeNull();
+    expect(await screen.findByText("Working")).toBeDefined();
+    expect(screen.queryByText("Done")).toBeNull();
   });
 });
 
@@ -1063,15 +1059,17 @@ describe("pull request badge", async () => {
 
   it("links the PR number out to the git host", async () => {
     await withPr("none");
-    const badge = await screen.findByRole("link", { name: "#412" });
+    const badge = await screen.findByRole("link", {
+      name: "PR #412 - Open: Fix the flake",
+    });
     expect(badge.getAttribute("href")).toBe("https://github.com/o/r/pull/412");
-    expect(badge.getAttribute("title")).toBe("Fix the flake");
+    expect(badge.getAttribute("title")).toBe("PR #412 - Open: Fix the flake");
   });
 
   it("shows no badge when the branch has no PR", async () => {
     await withRow(() => ({ env_pr: { outcome: "absent" } }));
     await screen.findByText("A thread");
-    expect(screen.queryByRole("link", { name: /^#/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^PR #/ })).toBeNull();
   });
 
   it("shows no badge when the pull request cannot be read", async () => {
@@ -1079,7 +1077,7 @@ describe("pull request badge", async () => {
       env_pr: { outcome: "unavailable", message: "gh failed" },
     }));
     await screen.findByText("A thread");
-    expect(screen.queryByRole("link", { name: /^#/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^PR #/ })).toBeNull();
     offline.unmount();
 
     // A disabled GitHub PR Status plugin rejects the read.
@@ -1087,19 +1085,54 @@ describe("pull request badge", async () => {
       throw new Error("Plugin bb--github-pr-status is disabled");
     });
     await screen.findByText("A thread");
-    expect(screen.queryByRole("link", { name: /^#/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^PR #/ })).toBeNull();
   });
 
-  // The attention state is bb's rolled-up "does this need you" signal, so the
-  // badge can colour itself without reading checks/review/mergeability.
-  it("colors the badge from the attention state", async () => {
-    const failing = await withPr("checks_failed");
+  // The attention state is bb's rolled-up "does this need you" signal, so a
+  // Child Row's badge can colour itself without reading checks/review/mergeability.
+  it("colors a Child Row's badge from the attention state", async () => {
+    const withChildPr = async (attention: string) =>
+      await renderSlot(inbox, { ...listProps, activeThreadId: "thr_pr" }, {
+        sidebarThreads: {
+          status: "ready",
+          threads: [
+            thread({ id: "thr_pr", environment }),
+            thread({
+              id: "thr_child",
+              title: "Child",
+              parentThreadId: "thr_pr",
+              environment,
+            }),
+          ],
+          projects: [project("proj_1", "bb")],
+        },
+        rpc: {
+          listGroups: () => ({ mains: [], preferred: [], order: [] }),
+          saveMain: () => ({ ok: true }),
+          saveGroupOrder: () => ({ ok: true }),
+          listLifecycle: () => ({ rows: [] }),
+          listOrder: () => ({ rows: [] }),
+          pullRequests: () => ({
+            env_pr: {
+              outcome: "available",
+              pullRequest: {
+                number: 412,
+                title: "Fix the flake",
+                url: "https://github.com/o/r/pull/412",
+                state: "open",
+                attention,
+              },
+            },
+          }),
+        },
+      });
+    const failing = await withChildPr("checks_failed");
     expect(
       (await screen.findByRole("link", { name: "#412" })).className,
     ).toContain("destructive");
     failing.unmount();
 
-    await withPr("ready_to_merge");
+    await withChildPr("ready_to_merge");
     expect(
       (await screen.findByRole("link", { name: "#412" })).className,
     ).toContain("success");
