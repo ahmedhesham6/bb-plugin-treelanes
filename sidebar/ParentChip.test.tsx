@@ -3,13 +3,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
+import { project } from "./test-fixtures";
 
 // Load through the harness so the plugin's `@get-bb/plugin-sdk/app` import binds
 // to the test runtime.
 const app = await loadPluginApp(() => import("../app"));
-const parentChip = app.threadHeaderActions.find(
-  (slot) => slot.id === "parent",
-)!;
+const parentChip = app.threadHeaderRows.find((slot) => slot.id === "parent")!;
 
 function thread(
   overrides: Partial<PluginSidebarThread> = {},
@@ -30,7 +29,6 @@ function thread(
       backgroundAgents: 0,
       backgroundCommands: 0,
       planMode: 0,
-      goals: 0,
     },
     indicator: "none",
     indicatorLabel: null,
@@ -43,23 +41,31 @@ function thread(
     updatedAt: 100,
     lastReadAt: 100,
     latestAttentionAt: 100,
+    displayTitle: "A thread",
+    lifecycleOwnerThreadId: null,
+    parentNotifications: "auto",
+    sourceThreadId: null,
+    status: "idle",
+    runtimeStatus: "idle",
+    queuedWork: "none",
+    pinnedAt: null,
+    pinSortKey: null,
+    archivedAt: null,
+    href: "/projects/proj_1/threads/thr_1",
+    isHidden: false,
     ...overrides,
   };
 }
 
-function render(
-  threads: PluginSidebarThread[],
-  threadId: string,
-  isCompactViewport = false,
-) {
+function render(threads: PluginSidebarThread[], threadId: string) {
   return renderSlot(
     parentChip,
-    { threadId, projectId: "proj_1", isCompactViewport },
+    { threadId, projectId: "proj_1", environment: null },
     {
       sidebarThreads: {
         status: "ready",
         threads,
-        projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+        projects: [project("proj_1", "bb")],
       },
     },
   );
@@ -79,11 +85,20 @@ describe("ParentChip", () => {
       "child",
     );
     fireEvent.click(screen.getByRole("button"));
-    expect(rendered.sidebarActionCalls).toContainEqual({
-      method: "open",
-      threadId: "parent",
-      options: undefined,
-    });
+    expect(rendered.navigateCalls).toEqual([
+      { method: "toThread", threadId: "parent" },
+    ]);
+  });
+
+  // Children come after the way back to the parent.
+  it("puts the parent row before the child row", () => {
+    const order = (id: string) =>
+      app.threadHeaderRows.find((slot) => slot.id === id)!.order!;
+    expect(app.threadHeaderRows.map((slot) => slot.id)).toEqual([
+      "parent",
+      "children",
+    ]);
+    expect(order("parent")).toBeLessThan(order("children"));
   });
 
   it("renders nothing on a root thread", () => {
@@ -105,19 +120,20 @@ describe("ParentChip", () => {
     );
   });
 
-  // The header row is short: a phone shows the chevron and the disc only, but
-  // the control keeps its name.
-  it("drops the title on a compact viewport", () => {
+  // A phone shows the chevron and the disc only, but the control keeps its
+  // name. bb gives a header row no viewport prop, so CSS hides the title.
+  it("hides the title on a compact viewport", () => {
     render(
       [
         thread({ id: "parent", title: "Parent thread" }),
         thread({ id: "child", parentThreadId: "parent" }),
       ],
       "child",
-      true,
     );
     const button = screen.getByRole("button");
-    expect(button.textContent).toBe("");
+    expect(screen.getByText("Parent thread").className.split(" ")).toEqual(
+      expect.arrayContaining(["max-sm:hidden", "pointer-coarse:hidden"]),
+    );
     expect(button.getAttribute("aria-label")).toBe(
       "Back to parent: Parent thread",
     );

@@ -2,6 +2,16 @@ import { createHash } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { checkNameSchema, deliveryStagesSchema, stageChecksSchema } from "./delivery-plan";
+import {
+  readGitDiff,
+  readGitFileSide,
+  readGitFiles,
+  readGitWorkspaceStatus,
+  type GitDiffResult,
+  type GitFileContent,
+  type GitFilesResult,
+  type GitStatusResult,
+} from "./git-reads";
 import { setupPlanSchema } from "./setup-plan";
 import { TASK_KINDS } from "./task-kinds";
 
@@ -98,13 +108,9 @@ type Sdk = BbPluginApi["sdk"];
 type Hash = ReturnType<typeof createHash>;
 
 type DiffTarget = "branch_committed" | "uncommitted" | "all";
-type DiffResponse = Awaited<ReturnType<Sdk["environments"]["diff"]>>;
-type DiffFilesResponse = Awaited<
-  ReturnType<Sdk["environments"]["diffFiles"]>
->;
-type DiffFileResponse = Awaited<
-  ReturnType<Sdk["environments"]["diffFile"]>
->;
+type DiffResponse = GitDiffResult;
+type DiffFilesResponse = GitFilesResult;
+type DiffFileResponse = GitFileContent;
 type FileReadResponse = Awaited<ReturnType<Sdk["files"]["read"]>>;
 
 type ChangedFile = Extract<
@@ -119,7 +125,7 @@ type FilePresence = {
 };
 
 type WorkspaceStatus = Extract<
-  Awaited<ReturnType<Sdk["environments"]["status"]>>,
+  GitStatusResult,
   { outcome: "available" }
 >["workspace"];
 
@@ -160,13 +166,6 @@ function assertAvailable<T extends { outcome: string }>(
     return unavailable(`${label} is ${result.outcome}`);
   }
   return result as Extract<T, { outcome: "available" }>;
-}
-
-// The bb--git plugin serves workspace status and diffs; a failed call fails the read.
-function git<T>(sdk: Sdk, method: "workspaceStatus" | "diff", input: {
-  environmentId: string; mergeBaseBranch?: string; target?: { type: DiffTarget; mergeBaseBranch?: string };
-}) {
-  return sdk.plugins.callRpc({ pluginId: "bb--git", method, input, outputSchema: z.custom<T>() });
 }
 
 async function readSdk<T>(label: string, operation: () => Promise<T>): Promise<T> {
@@ -507,7 +506,7 @@ async function captureSnapshot(
     "merge base branch",
   );
   const statusResult = await readSdk("workspace status", () =>
-    git<Awaited<ReturnType<Sdk["environments"]["status"]>>>(sdk, "workspaceStatus", { environmentId, mergeBaseBranch }),
+    readGitWorkspaceStatus(sdk, { environmentId, mergeBaseBranch }),
   );
   const status = assertAvailable(statusResult, "workspace status");
   const workspace = status.workspace;
@@ -542,26 +541,24 @@ async function captureSnapshot(
     branchDiffFilesResult,
   ] = await Promise.all([
       readSdk("committed branch diff", () =>
-        git<DiffResponse>(sdk, "diff", { environmentId, target: { type: "branch_committed", mergeBaseBranch } }),
+        readGitDiff(sdk, { environmentId, target: { type: "branch_committed", mergeBaseBranch } }),
       ),
       readSdk("uncommitted diff", () =>
-        git<DiffResponse>(sdk, "diff", { environmentId, target: { type: "uncommitted" } }),
+        readGitDiff(sdk, { environmentId, target: { type: "uncommitted" } }),
       ),
       readSdk("combined workspace diff", () =>
-        git<DiffResponse>(sdk, "diff", { environmentId, target: { type: "all", mergeBaseBranch } }),
+        readGitDiff(sdk, { environmentId, target: { type: "all", mergeBaseBranch } }),
       ),
       readSdk("changed-file list", () =>
-        sdk.environments.diffFiles({
+        readGitFiles(sdk, {
           environmentId,
-          target: "all",
-          mergeBaseBranch,
+          target: { type: "all", mergeBaseBranch },
         }),
       ),
       readSdk("committed changed-file list", () =>
-        sdk.environments.diffFiles({
+        readGitFiles(sdk, {
           environmentId,
-          target: "branch_committed",
-          mergeBaseBranch,
+          target: { type: "branch_committed", mergeBaseBranch },
         }),
       ),
     ]);
@@ -685,7 +682,7 @@ async function frameFileContents(
         }
         const side = (label: string, target: "all" | "branch_committed", fileSide: "old" | "new") =>
           readSdk(`${label} ${relativePath}`, () =>
-            sdk.environments.diffFile({ environmentId, target, mergeBaseRef: baseRef, path: relativePath, side: fileSide }))
+            readGitFileSide(sdk, { environmentId, query: { target, mergeBaseRef: baseRef, path: relativePath, side: fileSide } }))
             .then((result) => decodeContent(result, `${label} ${relativePath}`));
         const empty = Promise.resolve(new Uint8Array(0));
         // The four reads of one file are independent; run them together.

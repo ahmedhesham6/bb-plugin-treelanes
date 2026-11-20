@@ -59,8 +59,9 @@ async function setup(assigned = true, settings: Record<string, string | boolean>
         baseBranch: "main", mergeBaseBranch: "main", defaultBranch: "main", status: "ready", createdAt: 1, updatedAt: 2,
       }) },
       projects: { list: async () => [{ id: "project", name: "Project" }] },
-      plugins: { callRpc: async ({ pluginId, method, input }: { pluginId: string; method: string; input?: unknown }) => {
-        if (pluginId !== "bb--github-pr-status" || method !== "pullRequests") return snapshot.sdk.plugins.callRpc({ pluginId, method, input } as never);
+      plugins: { callRpc: async (args: { pluginId: string; method: string; input?: unknown }) => {
+        const { pluginId, method, input } = args;
+        if (pluginId !== "bb--github-pr-status" || method !== "pullRequests") return snapshot.sdk.plugins.callRpc(args as never);
         return Object.fromEntries((input as { keys: string[] }).keys.map(key => [key, pullRequests[key] ?? { outcome: "absent" }]));
       } },
     },
@@ -813,7 +814,7 @@ describe("saved stage evidence", () => {
     expect(JSON.parse(String(cli.stdout))).toEqual(context);
     expect(t.requests).toHaveLength(0);
     expect(t.bb.storage.database().prepare("SELECT COUNT(*) AS count FROM worktree_cards").get()).toEqual({ count: 0 });
-    expect(t.harness.inspection.sdk.callsTo("environments.diff")).toHaveLength(0);
+    expect(t.snapshot.calls.filter(({ area }) => area.startsWith("git."))).toHaveLength(0);
     await expect(t.harness.behavior.callAgentTool("treelanes_set_task", t.task, t.agent)).rejects.toThrow(/Assign a Worktree Stage/);
     await expect(t.submit({ stage: "tdd", stageUpdatedAt: 0, taskRevision: 0, workspaceDigest: "invented",
       checks: [], decisionsResolved: true, openFindings: [], summary: "Not assigned" })).rejects.toThrow(/Assign a Worktree Stage/);
@@ -1501,7 +1502,7 @@ describe("saved stage evidence", () => {
   });
 });
 
-const quiet = { activeWorkflowCount: 0, activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 0, activePlanModeCount: 0, activeGoalCount: 0 };
+const quiet = { activeWorkflowCount: 0, activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 0, activePlanModeCount: 0 };
 
 async function appliedSetup(requiredChecks = ["API regression"], firstChecks = ["API regression"]) {
   const t = await setup(false);

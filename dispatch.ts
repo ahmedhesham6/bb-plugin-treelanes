@@ -10,7 +10,6 @@ type DispatchThread = {
     activeWorkflowCount: number;
     activeBackgroundAgentCount: number;
     activePlanModeCount: number;
-    activeGoalCount: number;
   };
 };
 
@@ -20,8 +19,7 @@ export function holdsDispatch(thread: Pick<DispatchThread, "status" | "activity"
   return ["active", "pending", "starting", "stopping"].includes(thread.status) ||
     (activity?.activeWorkflowCount ?? 0) > 0 ||
     (activity?.activeBackgroundAgentCount ?? 0) > 0 ||
-    (activity?.activePlanModeCount ?? 0) > 0 ||
-    (activity?.activeGoalCount ?? 0) > 0;
+    (activity?.activePlanModeCount ?? 0) > 0;
 }
 
 export async function findDispatchHolder<T extends DispatchThread>(
