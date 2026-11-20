@@ -156,8 +156,10 @@ layout.
 
 One main thread per Git worktree. Select a main thread to show its children.
 Select another worktree to collapse the previous group. Selecting a child keeps
-its group open. A collapsed main row shows input requests, failures, running
-threads, and unread counts. The sidebar reveals hidden agent children in the
+its group open. A Worktree Card has three lines, as in T3 Code: the project
+and the age or the most urgent status (Input, Failed, Working, then Done,
+with a count when more than one thread shares it); the title; and the
+agent, branch, PR badge and thread count. The sidebar reveals hidden agent children in the
 same Git Worktree when they link to a visible thread. Internal plugin threads
 stay hidden. Grouping keeps parent links.
 
@@ -232,7 +234,11 @@ report a security problem, read [SECURITY.md](SECURITY.md).
 ## Credits
 
 - The sidebar design takes ideas from the sidebar in
-  [T3 Code](https://github.com/pingdotgg/t3code).
+  [T3 Code](https://github.com/pingdotgg/t3code). The Worktree Card layout
+  ports its card row, under the MIT license notice in
+  [sidebar/t3code-LICENSE](sidebar/t3code-LICENSE). The running status icon
+  copies [Lucide](https://lucide.dev)'s circle-dashed icon, under the ISC
+  license notice in [assets/lucide-LICENSE](assets/lucide-LICENSE).
 - The sidebar code started as a copy of an MIT-licensed sidebar plugin by
   Michael Yong. Its license notice is in [sidebar/LICENSE](sidebar/LICENSE).
 - The pull request template follows the

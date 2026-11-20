@@ -4,8 +4,7 @@ import {
   useBbNavigate,
   type PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
-import { RunningDot } from "./RunningDot";
-import type { groupAttentionItems } from "./groups";
+import { groupAttentionItems } from "./groups";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import {
@@ -15,6 +14,9 @@ import {
 } from "./RowContextMenu";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { StatusOrTime } from "./StatusSlot";
+import { CardStatusOrTime } from "./CardStatus";
+import { ProjectChip } from "./ProjectChip";
+import { MiddleTruncate } from "./MiddleTruncate";
 import { threadDisplayTitle, type DropPlacement } from "./inbox";
 import { usePullRequest } from "./usePullRequest";
 import {
@@ -114,6 +116,31 @@ export function ThreadCard(props: ThreadCardProps) {
     regeneratingTitle: regenerate.pending,
   };
   const location = thread.environment?.branchName ?? thread.host?.name ?? "";
+  const pr = usePullRequest(thread.environment?.id ?? null);
+  const hasThreadsControl = group !== undefined && group.count > 1;
+  const metaLineEmpty = !location && !pr && !hasThreadsControl;
+  const summary = group?.summary ?? groupAttentionItems([thread]);
+  const snoozeLine = shelf === "snoozed" && wakeAt && (
+    <p className="pointer-events-none relative mt-1 flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
+      <Icon name="Clock" aria-hidden="true" className="size-3.5" />
+      <span>{snoozeWakeLabel(wakeAt, now)}</span>
+    </p>
+  );
+  const selectedChildLine = group?.selectedChild && !group.expanded && (
+    <p
+      className="pointer-events-none relative mt-1 truncate text-xs text-sidebar-foreground"
+      title={group.selectedChild}
+    >
+      Open: {group.selectedChild}
+    </p>
+  );
+  const activityText = Object.entries(thread.activity)
+    .filter(([, n]) => n > 0)
+    .map(([key, count]) => (
+      <span key={key} className="sr-only" aria-label={`${count} ${key}`}>
+        {count} {key}
+      </span>
+    ));
   return (
     <RowContextMenu {...menu}>
       <li
@@ -135,8 +162,8 @@ export function ThreadCard(props: ThreadCardProps) {
         )}
         <div
           className={cn(
-            "group/card relative rounded-lg px-2.5 text-sidebar-foreground",
-            compact ? "py-1.5" : "py-2",
+            "group/card relative rounded-lg text-sidebar-foreground",
+            compact && "px-2.5 py-1.5",
             isDragging && "opacity-50",
             isActive
               ? "bg-state-active bb-sidebar-selected-row"
@@ -182,25 +209,19 @@ export function ThreadCard(props: ThreadCardProps) {
             onClick={open}
             className="absolute inset-0 cursor-pointer rounded-lg active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
-          <div
-            className={cn(
-              "pointer-events-none relative flex min-h-7 gap-2 pointer-coarse:min-h-11",
-              compact ? "items-center" : "items-start",
-            )}
-          >
-            <span
-              className={cn(
-                "min-w-0 flex-1 self-center text-sm leading-5 pointer-coarse:text-base pointer-coarse:leading-6",
-                compact ? "truncate" : "line-clamp-2 break-words font-medium",
-                thread.isUnread && "font-semibold",
-                regenerate.pending && "text-muted-foreground",
-              )}
-            >
-              {title}
-            </span>
-            {compact ? (
-              <>
-                <PullRequest environmentId={thread.environment?.id ?? null} />
+          {compact ? (
+            <>
+              <div className="pointer-events-none relative flex min-h-7 items-center gap-2 pointer-coarse:min-h-11">
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 self-center truncate text-sm leading-5 pointer-coarse:text-base pointer-coarse:leading-6",
+                    thread.isUnread && "font-semibold",
+                    regenerate.pending && "text-muted-foreground",
+                  )}
+                >
+                  {title}
+                </span>
+                {pr && <PullRequest pr={pr} />}
                 <span className="grid min-h-7 shrink-0 items-center justify-items-end pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:gap-1">
                   <span
                     className={cn(
@@ -220,100 +241,138 @@ export function ThreadCard(props: ThreadCardProps) {
                   </span>
                 </span>
                 <ProviderGlyph providerId={thread.providerId} />
-              </>
-            ) : (
-              <span className="flex min-h-7 shrink-0 items-center gap-1 pointer-coarse:min-h-11">
-                <StatusOrTime thread={thread} now={now} />
-                <span
-                  data-card-menu=""
-                  className={cn(
-                    "opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 pointer-coarse:opacity-100",
-                    menuOpen && "opacity-100",
-                  )}
-                >
-                  <RowMenuButton {...menu} onOpenChange={setMenuOpen} />
-                </span>
-              </span>
-            )}
-          </div>
-          {group && group.summary.length > 0 && (
-            <p
-              className="pointer-events-none relative mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs leading-5 text-muted-foreground"
-              aria-live="polite"
-              aria-atomic="true"
-            >
-              {group.summary.map((item) => (
-                <span
-                  key={item.kind}
-                  className="inline-flex items-center gap-1.5"
-                >
-                  {item.kind === "running" && <RunningDot />}
-                  {item.label}
-                </span>
-              ))}
-            </p>
-          )}
-          {!compact && (
-            <div className="pointer-events-none relative mt-1 flex min-h-6 items-center gap-2 text-xs text-muted-foreground">
-              <ProviderGlyph providerId={thread.providerId} leading />
-              <span
-                className="min-w-0 flex-1 truncate"
-                title={[projectName, location].filter(Boolean).join(" / ")}
+              </div>
+              {activityText}
+              {snoozeLine}
+              {selectedChildLine}
+            </>
+          ) : (
+            <>
+              <div
+                data-card-body=""
+                className={cn(
+                  "pointer-events-none relative h-[4.875rem] px-2.5 py-2 pointer-coarse:h-auto",
+                  metaLineEmpty && "h-auto",
+                )}
               >
-                {projectName && <span>{projectName}</span>}
-                {projectName && location && <span aria-hidden="true"> / </span>}
-                <span>{location}</span>
-              </span>
-              <PullRequest environmentId={thread.environment?.id ?? null} />
-              {group && group.count > 1 && (
-                <button
-                  type="button"
-                  aria-label={`${group.expanded ? "Collapse" : "Expand"} ${title}`}
-                  aria-expanded={group.expanded}
-                  title={
-                    group.expanded ? "Hide other threads" : "Show other threads"
-                  }
-                  onClick={group.toggle}
-                  className={cn(
-                    "pointer-events-auto flex min-h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs tabular-nums hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11",
-                    group.expanded &&
-                      "bg-sidebar-accent text-sidebar-foreground",
-                  )}
+                <div
+                  data-card-line="project"
+                  className="flex h-5 min-w-0 items-center gap-1.5 pointer-coarse:h-11"
                 >
-                  <span>{group.count} threads</span>
-                  <Icon
-                    name="ChevronDown"
-                    aria-hidden="true"
-                    className={cn("size-4", !group.expanded && "-rotate-90")}
-                  />
-                </button>
+                  {projectName ? (
+                    <>
+                      <ProjectChip name={projectName} />
+                      <span
+                        className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                        title={projectName}
+                      >
+                        {projectName}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="flex-1" />
+                  )}
+                  <span
+                    data-card-status=""
+                    className="relative ml-auto flex h-5 min-w-8 shrink-0 items-center justify-end text-xs pointer-coarse:h-11 pointer-coarse:gap-1"
+                  >
+                    <span
+                      data-status-value=""
+                      className={cn(
+                        "flex items-center tabular-nums text-muted-foreground group-hover/card:opacity-0 group-focus-within/card:opacity-0",
+                        menuOpen && "opacity-0",
+                      )}
+                    >
+                      <CardStatusOrTime
+                        summary={summary}
+                        updatedAt={thread.updatedAt}
+                        now={now}
+                      />
+                    </span>
+                    <span
+                      data-card-menu=""
+                      className={cn(
+                        "absolute top-1/2 right-0 -translate-y-1/2 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 pointer-coarse:static pointer-coarse:translate-y-0 pointer-coarse:opacity-100",
+                        menuOpen && "opacity-100",
+                      )}
+                    >
+                      <RowMenuButton {...menu} onOpenChange={setMenuOpen} />
+                    </span>
+                  </span>
+                </div>
+                <div
+                  data-card-line="title"
+                  className="mt-1 flex min-w-0 items-center gap-1.5"
+                >
+                  <span
+                    className={cn(
+                      "min-w-0 flex-1 truncate text-sm leading-5 font-medium pointer-coarse:text-base pointer-coarse:leading-6",
+                      thread.isUnread && "font-semibold",
+                      regenerate.pending && "text-muted-foreground",
+                    )}
+                  >
+                    {title}
+                  </span>
+                  {metaLineEmpty && (
+                    <ProviderGlyph providerId={thread.providerId} leading />
+                  )}
+                </div>
+                {!metaLineEmpty && (
+                  <div
+                    data-card-line="meta"
+                    className="mt-0.5 flex h-4 min-w-0 items-center gap-1.5 text-xs text-muted-foreground pointer-coarse:h-11"
+                  >
+                    <ProviderGlyph providerId={thread.providerId} leading />
+                    {location ? (
+                      <span className="flex min-w-0 flex-1">
+                        <MiddleTruncate value={location} />
+                      </span>
+                    ) : (
+                      <span className="flex-1" />
+                    )}
+                    {pr && <CardPullRequest pr={pr} />}
+                    {group && hasThreadsControl && (
+                      <button
+                        type="button"
+                        aria-label={`${group.expanded ? "Collapse" : "Expand"} ${title}`}
+                        aria-expanded={group.expanded}
+                        title={
+                          group.expanded
+                            ? "Hide other threads"
+                            : "Show other threads"
+                        }
+                        onClick={group.toggle}
+                        className={cn(
+                          "pointer-events-auto -mr-1.5 flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs tabular-nums hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-11",
+                          group.expanded &&
+                            "bg-sidebar-accent text-sidebar-foreground",
+                        )}
+                      >
+                        <span>{group.count} threads</span>
+                        <Icon
+                          name="ChevronDown"
+                          aria-hidden="true"
+                          className={cn(
+                            "size-4",
+                            !group.expanded && "-rotate-90",
+                          )}
+                        />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              <p className="sr-only" aria-live="polite" aria-atomic="true">
+                {summary.map((item) => item.label).join(", ")}
+              </p>
+              {activityText}
+              {(snoozeLine || selectedChildLine) && (
+                <div className="relative -mt-1 px-2.5 pb-2">
+                  {snoozeLine}
+                  {selectedChildLine}
+                </div>
               )}
-            </div>
-          )}
-          {Object.entries(thread.activity)
-            .filter(([, n]) => n > 0)
-            .map(([key, count]) => (
-              <span
-                key={key}
-                className="sr-only"
-                aria-label={`${count} ${key}`}
-              >
-                {count} {key}
-              </span>
-            ))}
-          {shelf === "snoozed" && wakeAt && (
-            <p className="pointer-events-none relative mt-1 flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
-              <Icon name="Clock" aria-hidden="true" className="size-3.5" />
-              <span>{snoozeWakeLabel(wakeAt, now)}</span>
-            </p>
-          )}
-          {group?.selectedChild && !group.expanded && (
-            <p
-              className="pointer-events-none relative mt-1 truncate text-xs text-sidebar-foreground"
-              title={group.selectedChild}
-            >
-              Open: {group.selectedChild}
-            </p>
+            </>
           )}
         </div>
       </li>
@@ -321,28 +380,75 @@ export function ThreadCard(props: ThreadCardProps) {
   );
 }
 
-function PullRequest({ environmentId }: { environmentId: string | null }) {
-  const pr = usePullRequest(environmentId);
+type PullRequestRow = NonNullable<ReturnType<typeof usePullRequest>>;
+
+function PullRequest({ pr }: { pr: PullRequestRow }) {
   return (
-    pr && (
-      <a
-        href={pr.url}
-        target="_blank"
-        rel="noreferrer"
-        title={pr.title}
-        className={cn(
-          "pointer-events-auto relative inline-flex min-h-6 shrink-0 items-center text-xs tabular-nums hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11",
-          pr.state === "merged"
-            ? "text-[color:var(--pr-merged)]"
-            : pr.attention === "checks_failed" || pr.attention === "conflicts"
-              ? "text-destructive-text"
-              : pr.attention === "ready_to_merge"
-                ? "text-success-foreground"
-                : "text-muted-foreground",
-        )}
-      >
-        #{pr.number}
-      </a>
-    )
+    <a
+      href={pr.url}
+      target="_blank"
+      rel="noreferrer"
+      title={pr.title}
+      className={cn(
+        "pointer-events-auto relative inline-flex min-h-6 shrink-0 items-center text-xs tabular-nums hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11",
+        pr.state === "merged"
+          ? "text-[color:var(--pr-merged)]"
+          : pr.attention === "checks_failed" || pr.attention === "conflicts"
+            ? "text-destructive-text"
+            : pr.attention === "ready_to_merge"
+              ? "text-success-foreground"
+              : "text-muted-foreground",
+      )}
+    >
+      #{pr.number}
+    </a>
+  );
+}
+
+const PULL_REQUEST_STATES: Record<
+  PullRequestRow["state"],
+  { label: string; icon: string; className: string }
+> = {
+  open: {
+    label: "Open",
+    icon: "GitPullRequestArrow",
+    className: "text-emerald-600 dark:text-emerald-300/90",
+  },
+  draft: {
+    label: "Draft",
+    icon: "GitPullRequestDraft",
+    className: "text-zinc-500 dark:text-zinc-400/80",
+  },
+  closed: {
+    label: "Closed",
+    icon: "GitPullRequestClosed",
+    className: "text-red-600 dark:text-red-300/90",
+  },
+  merged: {
+    label: "Merged",
+    icon: "GitMerge",
+    className: "text-violet-600 dark:text-violet-300/90",
+  },
+};
+
+function CardPullRequest({ pr }: { pr: PullRequestRow }) {
+  const state = PULL_REQUEST_STATES[pr.state];
+  const label = `PR #${pr.number} - ${state.label}: ${pr.title}`;
+  return (
+    <a
+      href={pr.url}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={label}
+      title={label}
+      className="pointer-events-auto relative inline-flex shrink-0 items-center gap-0.5 tabular-nums hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
+    >
+      <Icon
+        name={state.icon}
+        aria-hidden="true"
+        className={cn("size-3 shrink-0", state.className)}
+      />
+      <span>{pr.number}</span>
+    </a>
   );
 }

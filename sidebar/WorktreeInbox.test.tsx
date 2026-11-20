@@ -212,7 +212,7 @@ it("reloads lifecycle state when the connection returns", async () => {
   expect(await screen.findByRole("link", { name: "a-child" })).toBeDefined();
 });
 
-it("shows Luna titles, the agent spinner, a group running dot, and child PR links", async () => {
+it("shows Luna titles, the agent spinner, the card's running status, and PR links", async () => {
   const source = [
     fixture("main", "env"),
     fixture("child", "env", {
@@ -273,18 +273,26 @@ it("shows Luna titles, the agent spinner, a group running dot, and child PR link
   expect(screen.getByLabelText("Agent running").getAttribute("data-icon")).toBe(
     "Loading",
   );
-  const running = screen.getByText("1 running");
-  expect(running.querySelector("[data-running-dot]")).not.toBeNull();
-  const badges = await screen.findAllByRole("link", { name: "#123" });
-  expect(badges.map((badge) => badge.getAttribute("href"))).toEqual([
+  const card = screen.getByRole("link", { name: "main" }).closest("li")!;
+  const status = card.querySelector("[data-status]")!;
+  expect(status.getAttribute("data-status")).toBe("running");
+  expect(status.textContent).toBe("Working");
+  expect(card.querySelector("[aria-live='polite']")!.textContent).toBe(
+    "1 running",
+  );
+  const cardBadge = await within(card).findByRole("link", {
+    name: "PR #123 - Open: Invoice payments",
+  });
+  expect(cardBadge.getAttribute("href")).toBe(
     "https://github.com/example/repo/pull/123",
+  );
+  const childBadge = await screen.findByRole("link", { name: "#123" });
+  expect(childBadge.getAttribute("href")).toBe(
     "https://github.com/example/repo/pull/123",
-  ]);
-  expect(
-    badges.some((badge) =>
-      badge.closest("li")?.textContent?.includes("Test invoice payments"),
-    ),
-  ).toBe(true);
+  );
+  expect(childBadge.closest("li")?.textContent).toContain(
+    "Test invoice payments",
+  );
   expect(source[1].title).toBe("Workflow TDD [env_abc:tdd:1]");
 });
 
