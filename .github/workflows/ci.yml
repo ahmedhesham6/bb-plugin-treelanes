@@ -33,3 +33,11 @@ jobs:
       - name: Install the bb CLI for the plugin build
         run: npm install --global bb-app@0.50.1
       - run: npm run build
+      # bb installs a plugin from Git without devDependencies and then builds
+      # it. A runtime import that only a devDependency provides passes the
+      # build above and fails there.
+      - name: Build as a Git install does, without devDependencies
+        run: |
+          rm -rf node_modules dist
+          npm ci --omit=dev --omit=optional --ignore-scripts
+          npm run build
