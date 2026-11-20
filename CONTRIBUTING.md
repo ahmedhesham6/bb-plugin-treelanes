@@ -15,7 +15,7 @@ To report a security problem, read [SECURITY.md](SECURITY.md).
 
 ## Set up
 
-You need Node.js 24, npm, and bb 0.43.3 or later.
+You need Node.js 24, npm, and bb 0.50 or later.
 
 ```sh
 git clone https://github.com/ahmedhesham6/bb-plugin-treelanes
@@ -51,6 +51,7 @@ Each `*.test.ts` or `*.test.tsx` file sits next to the code that it tests.
 ├── app.tsx                 # board panel, thread pane, app slot registration
 ├── workflow.ts             # stage IDs and labels
 ├── stage-evidence.ts       # Saved Task and Completion Receipt schemas, worktree digest
+├── git-reads.ts            # worktree status, diff and file reads from bb's Git plugin
 ├── stage-prompts.ts        # stage worker prompts
 ├── delivery-plan.ts        # deliveryStages and check rules
 ├── setup-plan.ts           # Task Setup schema and revision rules

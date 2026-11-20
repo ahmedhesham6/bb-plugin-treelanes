@@ -14,8 +14,10 @@ import {
 } from "@get-bb/plugin-sdk/testing/app";
 import type {
   PluginSidebarThread,
+  PluginThreadActionEntry,
   PluginThreadListProps,
 } from "@get-bb/plugin-sdk";
+import { project } from "./test-fixtures";
 import { dragAutoScrollSpeed } from "./useDragAutoScroll";
 
 // Load through the harness so the plugin's `@get-bb/plugin-sdk/app` import binds
@@ -53,7 +55,6 @@ function thread(
       backgroundAgents: 0,
       backgroundCommands: 0,
       planMode: 0,
-      goals: 0,
     },
     indicator: "none",
     indicatorLabel: null,
@@ -66,6 +67,18 @@ function thread(
     updatedAt: 100,
     lastReadAt: 100,
     latestAttentionAt: 100,
+    displayTitle: "A thread",
+    lifecycleOwnerThreadId: null,
+    parentNotifications: "auto",
+    sourceThreadId: null,
+    status: "idle",
+    runtimeStatus: "idle",
+    queuedWork: "none",
+    pinnedAt: null,
+    pinSortKey: null,
+    archivedAt: null,
+    href: "/projects/proj_1/threads/thr_1",
+    isHidden: false,
     ...overrides,
   };
 }
@@ -76,15 +89,16 @@ const listProps = {
   isCompactViewport: false,
   onNavigate: () => {},
   searchQuery: "",
-  Original: () => null,
 };
 
 async function render(
   threads: PluginSidebarThread[],
-  projects = [{ id: "proj_1", name: "bb", isPersonal: false }],
+  projects = [project("proj_1", "bb")],
   props: PluginThreadListProps = listProps,
+  options: Parameters<typeof renderSlot>[2] = {},
 ) {
   return await renderSlot(inbox, props, {
+    ...options,
     sidebarThreads: { status: "ready", threads, projects },
     // The lifecycle store is the plugin's own backend; an empty one means
     // every thread is active, which is what these list tests are about.
@@ -233,7 +247,7 @@ describe("ThreadInbox", async () => {
         sidebarThreads: {
           status: "ready",
           threads: [thread({ id: "thr_open" })],
-          projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+          projects: [project("proj_1", "bb")],
         },
         rpc: {
           listGroups: () => ({ mains: [], preferred: [], order: [] }),
@@ -245,8 +259,8 @@ describe("ThreadInbox", async () => {
       },
     );
     fireEvent.click(screen.getByRole("link"));
-    expect(rendered.sidebarActionCalls).toContainEqual({
-      method: "open",
+    expect(rendered.navigateCalls).toContainEqual({
+      method: "toThread",
       threadId: "thr_open",
       options: { split: false },
     });
@@ -256,8 +270,8 @@ describe("ThreadInbox", async () => {
   it("opens in a split with the platform modifier held", async () => {
     const rendered = await render([thread({ id: "thr_split" })]);
     fireEvent.click(screen.getByRole("link"), { metaKey: true });
-    expect(rendered.sidebarActionCalls).toContainEqual({
-      method: "open",
+    expect(rendered.navigateCalls).toContainEqual({
+      method: "toThread",
       threadId: "thr_split",
       options: { split: true },
     });
@@ -285,7 +299,7 @@ describe("ThreadInbox", async () => {
             thread({ id: "a", title: "Sidebar work" }),
             thread({ id: "b", title: "Something else" }),
           ],
-          projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+          projects: [project("proj_1", "bb")],
         },
         rpc: {
           listGroups: () => ({ mains: [], preferred: [], order: [] }),
@@ -317,8 +331,8 @@ describe("ThreadInbox", async () => {
         thread({ id: "b", title: "In other", projectId: "proj_2" }),
       ],
       [
-        { id: "proj_1", name: "bb", isPersonal: false },
-        { id: "proj_2", name: "other", isPersonal: false },
+        project("proj_1", "bb"),
+        project("proj_2", "other"),
       ],
     );
     // Radix opens on keyboard too, which jsdom can drive without pointer
@@ -349,7 +363,7 @@ describe("manual thread order", async () => {
           thread({ id: "a", title: "Alpha", createdAt: 1 }),
           thread({ id: "b", title: "Beta", createdAt: 2 }),
         ],
-        projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+        projects: [project("proj_1", "bb")],
       },
       rpc: {
         listGroups: () => ({ mains: [], preferred: [], order: [] }),
@@ -380,7 +394,7 @@ describe("manual thread order", async () => {
           thread({ id: "a", title: "Alpha", createdAt: 1 }),
           thread({ id: "b", title: "Beta", createdAt: 2 }),
         ],
-        projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+        projects: [project("proj_1", "bb")],
       },
       rpc: {
         listGroups: () => ({ mains: [], preferred: [], order: [] }),
@@ -412,7 +426,7 @@ describe("manual thread order", async () => {
           thread({ id: "a", title: "Alpha", createdAt: 1 }),
           thread({ id: "b", title: "Beta", createdAt: 2 }),
         ],
-        projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+        projects: [project("proj_1", "bb")],
       },
       rpc: {
         listGroups: () => ({ mains: [], preferred: [], order: [] }),
@@ -453,7 +467,7 @@ describe("manual thread order", async () => {
           thread({ id: "a", title: "First child", parentThreadId: "p1" }),
           thread({ id: "b", title: "Other child", parentThreadId: "p2" }),
         ],
-        projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+        projects: [project("proj_1", "bb")],
       },
       rpc: {
         listGroups: () => ({ mains: [], preferred: [], order: [] }),
@@ -479,7 +493,7 @@ describe("parking threads", async () => {
       sidebarThreads: {
         status: "ready",
         threads: [thread({ id: "thr_done", title: "Finished work" })],
-        projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+        projects: [project("proj_1", "bb")],
       },
       rpc: {
         listGroups: () => ({ mains: [], preferred: [], order: [] }),
@@ -521,11 +535,10 @@ describe("parking threads", async () => {
               backgroundAgents: 0,
               backgroundCommands: 0,
               planMode: 0,
-              goals: 0,
             },
           }),
         ],
-        projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+        projects: [project("proj_1", "bb")],
       },
       // Settled in the store, but still working: it must stay visible.
       rpc: {
@@ -569,7 +582,7 @@ describe("parking threads", async () => {
       sidebarThreads: {
         status: "ready",
         threads: [thread({ id: "thr_park", title: "Quiet" })],
-        projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+        projects: [project("proj_1", "bb")],
       },
       rpc: {
         listGroups: () => ({ mains: [], preferred: [], order: [] }),
@@ -596,7 +609,7 @@ describe("parking threads", async () => {
       sidebarThreads: {
         status: "ready",
         threads: [thread({ id: "thr_snz", title: "Later" })],
-        projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+        projects: [project("proj_1", "bb")],
       },
       rpc: {
         listGroups: () => ({ mains: [], preferred: [], order: [] }),
@@ -627,12 +640,17 @@ describe("parking threads", async () => {
 
 describe("row context menu", async () => {
   it("offers the plugin's own thread actions on right-click", async () => {
-    await render([thread({ id: "thr_menu", title: "Right click me" })]);
+    await render(
+      [thread({ id: "thr_menu", title: "Right click me" })],
+      undefined,
+      undefined,
+      hostActions([]),
+    );
     const row = await screen.findByText("Right click me");
     fireEvent.contextMenu(row);
     const menu = await screen.findByRole("menu", { name: "Thread actions" });
-    // The plugin builds this menu itself — the SDK ships no menu component —
-    // so the items are this plugin's choice, backed by the action hook.
+    // The plugin builds this menu itself, so the items are this plugin's
+    // choice. bb's navigation, API client and thread actions run them.
     expect(
       within(menu)
         .getAllByRole("menuitem")
@@ -650,18 +668,93 @@ describe("row context menu", async () => {
     ]);
   });
 
+  // bb's own thread actions own the confirmations, so the plugin runs them
+  // by key and never deletes or archives through the API itself.
+  const hostActions = (ran: string[]) => ({
+    threadActions: (target: { id: string }): PluginThreadActionEntry[] =>
+      ["archive", "delete"].map((id) => ({
+        key: `bb--core/${id}`,
+        pluginId: "bb--core",
+        group: "4_lifecycle",
+        action: {
+          label: id,
+          icon: "Archive",
+          run: async () => {
+            ran.push(`${id}:${target.id}`);
+          },
+        },
+      })),
+    sdk: {},
+  });
+
   it("routes deletion through the host's confirmation", async () => {
-    const rendered = await render([
-      thread({ id: "thr_del", title: "Delete me" }),
-    ]);
+    const ran: string[] = [];
+    const rendered = await render(
+      [thread({ id: "thr_del", title: "Delete me" })],
+      undefined,
+      undefined,
+      hostActions(ran),
+    );
     fireEvent.contextMenu(await screen.findByText("Delete me"));
     const menu = await screen.findByRole("menu", { name: "Thread actions" });
     fireEvent.click(within(menu).getByText("Delete"));
+    await waitFor(() => expect(ran).toEqual(["delete:thr_del"]));
+    expect(rendered.sdkCalls).toEqual([]);
+  });
+
+  it("leaves out Archive and Delete when bb offers no such thread action", async () => {
+    await render(
+      [thread({ id: "thr_none", title: "No lifecycle" })],
+      undefined,
+      undefined,
+      { threadActions: () => [], sdk: {} },
+    );
+    fireEvent.contextMenu(await screen.findByText("No lifecycle"));
+    const menu = await screen.findByRole("menu", { name: "Thread actions" });
+    expect(within(menu).getByText("Pin")).toBeDefined();
+    expect(within(menu).queryByText("Archive")).toBeNull();
+    expect(within(menu).queryByText("Delete")).toBeNull();
+  });
+
+  it("routes archive through the host's thread action", async () => {
+    const ran: string[] = [];
+    const rendered = await render(
+      [thread({ id: "thr_arc", title: "Archive me" })],
+      undefined,
+      undefined,
+      hostActions(ran),
+    );
+    fireEvent.contextMenu(await screen.findByText("Archive me"));
+    const menu = await screen.findByRole("menu", { name: "Thread actions" });
+    fireEvent.click(within(menu).getByText("Archive"));
+    await waitFor(() => expect(ran).toEqual(["archive:thr_arc"]));
+    expect(rendered.sdkCalls).toEqual([]);
+  });
+
+  it("pins and marks a thread read through bb's API", async () => {
+    const rendered = await render(
+      [thread({ id: "thr_api", title: "Change me", isUnread: true })],
+      undefined,
+      undefined,
+      {
+        sdk: {
+          threads: {
+            pin: async () => ({}) as never,
+            markRead: async () => ({}) as never,
+          },
+        },
+      },
+    );
+    for (const label of ["Pin", "Mark read"]) {
+      fireEvent.contextMenu(await screen.findByText("Change me"));
+      const menu = await screen.findByRole("menu", { name: "Thread actions" });
+      fireEvent.click(within(menu).getByText(label));
+    }
     await waitFor(() =>
-      expect(rendered.sidebarActionCalls).toContainEqual({
-        method: "requestDelete",
-        threadId: "thr_del",
-      }),
+      expect(rendered.sdkCalls).toEqual([
+        { method: "threads.pin", args: [{ threadId: "thr_api" }] },
+        { method: "threads.markRead", args: [{ threadId: "thr_api" }] },
+      ]),
     );
   });
 });
@@ -698,6 +791,8 @@ describe("card metadata", async () => {
           id: "env_1",
           name: "Worktree",
           branchName: "bb/feature",
+          path: "/worktrees/env_1",
+          isWorktree: true,
           providerId: null,
           workspaceDisplayKind: "managed-worktree",
         },
@@ -786,13 +881,24 @@ describe("attention states", async () => {
   });
 });
 
+// The GitHub PR Status plugin owns pull request data. The badge reads its
+// `pullRequests` rows, one for each environment id.
 describe("pull request badge", async () => {
-  const withPr = async (attention: string, state = "open") =>
-    await renderSlot(inbox, listProps, {
+  const environment = {
+    id: "env_pr",
+    name: "Worktree",
+    branchName: "bb/feature",
+    path: "/worktrees/env_pr",
+    isWorktree: true,
+    providerId: null,
+    workspaceDisplayKind: "managed-worktree" as const,
+  };
+  const withRow = async (row: (keys: string[]) => unknown) => {
+    const view = await renderSlot(inbox, listProps, {
       sidebarThreads: {
         status: "ready",
-        threads: [thread({ id: "thr_pr" })],
-        projects: [{ id: "proj_1", name: "bb", isPersonal: false }],
+        threads: [thread({ id: "thr_pr", environment })],
+        projects: [project("proj_1", "bb")],
       },
       rpc: {
         listGroups: () => ({ mains: [], preferred: [], order: [] }),
@@ -800,17 +906,30 @@ describe("pull request badge", async () => {
         saveGroupOrder: () => ({ ok: true }),
         listLifecycle: () => ({ rows: [] }),
         listOrder: () => ({ rows: [] }),
+        pullRequests: (input) => row((input as { keys: string[] }).keys),
       },
-      sidebarPullRequests: {
-        thr_pr: {
+    });
+    await waitFor(() =>
+      expect(view.rpcCalls).toContainEqual({
+        method: "pullRequests",
+        input: { keys: ["env_pr"] },
+      }),
+    );
+    return view;
+  };
+  const withPr = async (attention: string, state = "open") =>
+    await withRow(() => ({
+      env_pr: {
+        outcome: "available",
+        pullRequest: {
           number: 412,
           title: "Fix the flake",
           url: "https://github.com/o/r/pull/412",
           state,
           attention,
-        } as never,
+        },
       },
-    });
+    }));
 
   it("links the PR number out to the git host", async () => {
     await withPr("none");
@@ -820,7 +939,23 @@ describe("pull request badge", async () => {
   });
 
   it("shows no badge when the branch has no PR", async () => {
-    await render([thread({ id: "thr_nopr" })]);
+    await withRow(() => ({ env_pr: { outcome: "absent" } }));
+    await screen.findByText("A thread");
+    expect(screen.queryByRole("link", { name: /^#/ })).toBeNull();
+  });
+
+  it("shows no badge when the pull request cannot be read", async () => {
+    const offline = await withRow(() => ({
+      env_pr: { outcome: "unavailable", message: "gh failed" },
+    }));
+    await screen.findByText("A thread");
+    expect(screen.queryByRole("link", { name: /^#/ })).toBeNull();
+    offline.unmount();
+
+    // A disabled GitHub PR Status plugin rejects the read.
+    await withRow(() => {
+      throw new Error("Plugin bb--github-pr-status is disabled");
+    });
     await screen.findByText("A thread");
     expect(screen.queryByRole("link", { name: /^#/ })).toBeNull();
   });

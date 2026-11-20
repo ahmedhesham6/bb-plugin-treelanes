@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { toast } from "sonner";
-import { fixture } from "./test-fixtures";
+import { fixture, project } from "./test-fixtures";
 const app = await loadPluginApp(() => import("../app"));
 const slot = app.threadLists[0]!;
 const props = {
@@ -12,7 +12,6 @@ const props = {
   isCompactViewport: false,
   onNavigate: () => {},
   searchQuery: "",
-  Original: () => <p>BB fallback</p>,
 };
 const threads = [
   fixture("a", "one"),
@@ -40,7 +39,7 @@ function mount(
       sidebarThreads: {
         status: "ready",
         threads,
-        projects: [{ id: "project", name: "Project", isPersonal: false }],
+        projects: [project("project", "Project")],
       },
       rpc: {
         listGroups: () => ({ mains, preferred: [], order: [] }),
@@ -79,7 +78,7 @@ it("opens only the selected worktree and follows external child navigation", asy
   expect(await screen.findByRole("link", { name: "b-child" })).toBeDefined();
   expect(screen.queryByRole("link", { name: "a-child" })).toBeNull();
   expect(screen.getByText("1 needs input")).toBeDefined();
-  expect(view.sidebarActionCalls).toEqual([]);
+  expect(view.navigateCalls).toEqual([]);
 });
 it("keeps the group open when selecting a child, and collapses after selecting another main", async () => {
   const view = mount();
@@ -91,9 +90,9 @@ it("keeps the group open when selecting a child, and collapses after selecting a
   view.rerender(<Component {...props} activeThreadId="b" />);
   expect(screen.queryByRole("link", { name: "a-child" })).toBeNull();
   expect(screen.getByRole("link", { name: "b-child" })).toBeDefined();
-  expect(view.sidebarActionCalls.map((c) => c.method)).toEqual([
-    "open",
-    "open",
+  expect(view.navigateCalls).toEqual([
+    { method: "toThread", threadId: "a-child", options: { split: false } },
+    { method: "toThread", threadId: "b", options: { split: false } },
   ]);
 });
 it("lets the chevron inspect one group without opening a thread", async () => {
@@ -101,7 +100,7 @@ it("lets the chevron inspect one group without opening a thread", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Expand b" }));
   expect(screen.queryByRole("link", { name: "a-child" })).toBeNull();
   expect(screen.getByRole("link", { name: "b-child" })).toBeDefined();
-  expect(view.sidebarActionCalls).toHaveLength(0);
+  expect(view.navigateCalls).toHaveLength(0);
 });
 it("reveals a selected settled child without restoring its lifecycle", async () => {
   const view = mount("b-child", [
@@ -141,7 +140,7 @@ it("offers a root but not a child as main thread, without changing thread parent
       }),
     }),
   );
-  expect(view.sidebarActionCalls).toHaveLength(0);
+  expect(view.navigateCalls).toHaveLength(0);
 });
 it("repairs a saved child main to its root once", async () => {
   const info = vi.spyOn(toast, "info");
@@ -165,7 +164,7 @@ it("repairs a saved child main to its root once", async () => {
   expect(info.mock.calls).toEqual([["Main thread changed to b."]]);
   info.mockRestore();
 });
-it("falls back to BB when lifecycle data cannot load", async () => {
+it("shows an alert and no thread list when lifecycle data cannot load", async () => {
   renderSlot(slot, props, {
     sidebarThreads: { status: "ready", threads, projects: [] },
     rpc: {
@@ -176,8 +175,11 @@ it("falls back to BB when lifecycle data cannot load", async () => {
       },
     },
   });
-  expect(await screen.findByText("BB fallback")).toBeDefined();
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "Could not load Treelanes.",
+  );
   expect(screen.queryByText("No threads yet")).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
 });
 
 it("discards an old manual expansion when navigation returns to a main thread", async () => {
@@ -203,7 +205,7 @@ it("reloads lifecycle state when the connection returns", async () => {
       },
     },
   });
-  expect(await screen.findByText("BB fallback")).toBeDefined();
+  expect(await screen.findByRole("alert")).toBeDefined();
   online = true;
   await view.behavior.setRealtimeConnectionState("reconnecting");
   await view.behavior.setRealtimeConnectionState("connected");
@@ -227,7 +229,7 @@ it("shows Luna titles, the agent spinner, a group running dot, and child PR link
       sidebarThreads: {
         status: "ready",
         threads: source,
-        projects: [{ id: "project", name: "Project", isPersonal: false }],
+        projects: [project("project", "Project")],
       },
       rpc: {
         listGroups: () => ({
@@ -248,15 +250,19 @@ it("shows Luna titles, the agent spinner, a group running dot, and child PR link
             },
           ],
         }),
-      },
-      sidebarPullRequests: {
-        child: {
-          number: 123,
-          title: "Invoice payments",
-          url: "https://github.com/example/repo/pull/123",
-          state: "open",
-          attention: "none",
-        },
+        // One row for the worktree: its Main Thread and Child Row share it.
+        pullRequests: () => ({
+          env: {
+            outcome: "available",
+            pullRequest: {
+              number: 123,
+              title: "Invoice payments",
+              url: "https://github.com/example/repo/pull/123",
+              state: "open",
+              attention: "none",
+            },
+          },
+        }),
       },
     },
   );
@@ -268,8 +274,15 @@ it("shows Luna titles, the agent spinner, a group running dot, and child PR link
   );
   const running = screen.getByText("1 running");
   expect(running.querySelector("[data-running-dot]")).not.toBeNull();
-  expect(screen.getByRole("link", { name: "#123" }).getAttribute("href")).toBe(
+  const badges = await screen.findAllByRole("link", { name: "#123" });
+  expect(badges.map((badge) => badge.getAttribute("href"))).toEqual([
     "https://github.com/example/repo/pull/123",
-  );
+    "https://github.com/example/repo/pull/123",
+  ]);
+  expect(
+    badges.some((badge) =>
+      badge.closest("li")?.textContent?.includes("Test invoice payments"),
+    ),
+  ).toBe(true);
   expect(source[1].title).toBe("Workflow TDD [env_abc:tdd:1]");
 });

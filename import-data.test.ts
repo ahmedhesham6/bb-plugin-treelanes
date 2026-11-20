@@ -15,7 +15,7 @@ const thread = {
   ...makeThreadResponse({ id: "thread-one", projectId: "project-one", environmentId: "env-one" }),
   environmentName: "feature-tree", environmentBranchName: "feat/tree",
   environmentWorkspaceDisplayKind: "managed-worktree" as const,
-  activity: { activeWorkflowCount: 0, activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 0, activePlanModeCount: 0, activeGoalCount: 0 },
+  activity: { activeWorkflowCount: 0, activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 0, activePlanModeCount: 0 },
 };
 
 /** Old plugin databases as those plugins wrote them; the board one predates later columns. */

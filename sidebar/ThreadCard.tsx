@@ -1,8 +1,7 @@
 import { useRef, type DragEvent, type MouseEvent } from "react";
 import {
-  experimental_useSidebarThreadPullRequest as usePullRequest,
   experimental_useSidebarThreadSplit as useSplit,
-  experimental_useSidebarThreadActions as useActions,
+  useBbNavigate,
   type PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
 import { RunningDot } from "./RunningDot";
@@ -13,6 +12,7 @@ import { RowContextMenu, RowMenuButton } from "./RowContextMenu";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { StatusOrTime } from "./StatusSlot";
 import { threadDisplayTitle, type DropPlacement } from "./inbox";
+import { usePullRequest } from "./usePullRequest";
 import {
   resolveSnoozePresets,
   snoozeWakeLabel,
@@ -76,7 +76,7 @@ export function ThreadCard(props: ThreadCardProps) {
     onRestore,
   } = props;
   const dragged = useRef(false);
-  const actions = useActions();
+  const navigate = useBbNavigate();
   const { splitProps, layout } = useSplit(thread.id);
   const title = threadDisplayTitle(thread);
   const open = (event: MouseEvent<HTMLAnchorElement>) => {
@@ -86,7 +86,7 @@ export function ThreadCard(props: ThreadCardProps) {
       return;
     }
     onSelect?.();
-    actions.open(thread.id, { split: event.metaKey || event.ctrlKey });
+    navigate.toThread(thread.id, { split: event.metaKey || event.ctrlKey });
     onNavigate();
   };
   const park = canPark && shelf === "active";
@@ -215,7 +215,7 @@ export function ThreadCard(props: ThreadCardProps) {
                 {projectName && location && <span aria-hidden="true"> / </span>}
                 <span>{location}</span>
               </span>
-              <PullRequest threadId={thread.id} />
+              <PullRequest environmentId={thread.environment?.id ?? null} />
               {group && group.count > 1 && (
                 <button
                   type="button"
@@ -241,7 +241,12 @@ export function ThreadCard(props: ThreadCardProps) {
               )}
             </div>
           )}
-          {compact && <PullRequest threadId={thread.id} compact />}
+          {compact && (
+            <PullRequest
+              environmentId={thread.environment?.id ?? null}
+              compact
+            />
+          )}
           {compact && (
             <span className="sr-only">
               <ProviderGlyph providerId={thread.providerId} />
@@ -279,13 +284,13 @@ export function ThreadCard(props: ThreadCardProps) {
 }
 
 function PullRequest({
-  threadId,
+  environmentId,
   compact = false,
 }: {
-  threadId: string;
+  environmentId: string | null;
   compact?: boolean;
 }) {
-  const { pullRequest: pr } = usePullRequest(threadId);
+  const pr = usePullRequest(environmentId);
   return (
     pr && (
       <a

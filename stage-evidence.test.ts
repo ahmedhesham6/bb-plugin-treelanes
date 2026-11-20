@@ -7,6 +7,16 @@ import {
 
 import { makeWorkspaceSdk as makeSdk } from "./test-workspace";
 
+type FileSideQuery = { target: string; mergeBaseRef: string; path: string; side: "old" | "new" };
+type FileSideInput = { environmentId: string; query: FileSideQuery };
+
+/** The file sides a capture read from the bb--git plugin. */
+function fileSides(fixture: ReturnType<typeof makeSdk>): FileSideQuery[] {
+  return fixture.calls
+    .filter(({ area }) => area === "git.fileSide")
+    .map(({ args }) => (args as FileSideInput).query);
+}
+
 describe("stage evidence schemas", () => {
   it("accepts bounded task context and a versioned completion receipt", () => {
     expect(
@@ -130,11 +140,8 @@ describe("captureWorkspace", () => {
     expect(second).not.toBe(first);
     expect(fixture.calls.some(({ area }) => area === "files.read")).toBe(true);
     expect(
-      fixture.calls.some(
-        ({ area, args }) =>
-          area === "environments.diffFile" &&
-          args.target === "all" &&
-          args.side === "old",
+      fileSides(fixture).some(
+        (query) => query.target === "all" && query.side === "old",
       ),
     ).toBe(false);
   });
@@ -172,11 +179,10 @@ describe("captureWorkspace", () => {
     await captureWorkspace(fixture.sdk, "environment-one");
 
     expect(
-      fixture.calls.some(
-        ({ area, args }) =>
-          area === "environments.diffFile" &&
-          ((args.target === "all" && args.side === "old") ||
-            (args.target === "branch_committed" && args.side === "new")),
+      fileSides(fixture).some(
+        (query) =>
+          (query.target === "all" && query.side === "old") ||
+          (query.target === "branch_committed" && query.side === "new"),
       ),
     ).toBe(false);
   });
@@ -217,12 +223,11 @@ describe("captureWorkspace", () => {
       fixture.calls.some(({ area }) => area === "files.read"),
     ).toBe(false);
     expect(
-      fixture.calls.some(
-        ({ area, args }) =>
-          area === "environments.diffFile" &&
-          args.target === "all" &&
-          args.path === "removed.txt" &&
-          args.side === "old",
+      fileSides(fixture).some(
+        (query) =>
+          query.target === "all" &&
+          query.path === "removed.txt" &&
+          query.side === "old",
       ),
     ).toBe(true);
   });
@@ -260,32 +265,35 @@ describe("captureWorkspace", () => {
     await captureWorkspace(fixture.sdk, "environment-one");
 
     expect(fixture.calls).toContainEqual({
-      area: "environments.diffFile",
+      area: "git.fileSide",
       args: {
         environmentId: "environment-one",
-        target: "all",
-        mergeBaseRef: "base-1",
-        path: "original.txt",
-        side: "old",
+        query: {
+          target: "all",
+          mergeBaseRef: "base-1",
+          path: "original.txt",
+          side: "old",
+        },
       },
     });
     expect(fixture.calls).toContainEqual({
-      area: "environments.diffFile",
+      area: "git.fileSide",
       args: {
         environmentId: "environment-one",
-        target: "branch_committed",
-        mergeBaseRef: "base-1",
-        path: "renamed.txt",
-        side: "new",
+        query: {
+          target: "branch_committed",
+          mergeBaseRef: "base-1",
+          path: "renamed.txt",
+          side: "new",
+        },
       },
     });
     expect(
-      fixture.calls.some(
-        ({ area, args }) =>
-          area === "environments.diffFile" &&
-          args.target === "all" &&
-          args.path === "renamed.txt" &&
-          args.side === "old",
+      fileSides(fixture).some(
+        (query) =>
+          query.target === "all" &&
+          query.path === "renamed.txt" &&
+          query.side === "old",
       ),
     ).toBe(false);
     expect(fixture.calls).toContainEqual({
@@ -300,17 +308,20 @@ describe("captureWorkspace", () => {
 
   it("fails when the dirty diff side disagrees with the host file read", async () => {
     const fixture = makeSdk({ files: { "src/file.ts": { content: "new" } } });
-    const originalDiffFile = fixture.sdk.environments.diffFile;
-    fixture.sdk.environments.diffFile = async (args) => {
-      const result = await originalDiffFile(args);
+    const originalFileSide = fixture.git.fileSide;
+    fixture.git.fileSide = async (input) => {
+      const { query } = input as FileSideInput;
       if (
-        result.path === "src/file.ts" &&
-        args.target === "all" &&
-        args.side === "new"
+        query.path === "src/file.ts" &&
+        query.target === "all" &&
+        query.side === "new"
       ) {
-        return { ...result, content: "stale", sizeBytes: 5 };
+        return {
+          outcome: "available",
+          file: { path: query.path, content: "stale", contentEncoding: "utf8", sizeBytes: 5 },
+        };
       }
-      return result;
+      return originalFileSide(input);
     };
 
     await expect(
@@ -320,17 +331,30 @@ describe("captureWorkspace", () => {
 
   it("does not hide a missing base read error for a present base path", async () => {
     const fixture = makeSdk({ files: { "src/file.ts": { content: "new" } } });
-    const originalDiffFile = fixture.sdk.environments.diffFile;
-    fixture.sdk.environments.diffFile = async (args) => {
-      if (args.target === "all" && args.side === "old") {
-        throw new Error("base blob unavailable");
+    const originalFileSide = fixture.git.fileSide;
+    // The Git plugin reports a file side that it cannot read as an outcome.
+    fixture.git.fileSide = async (input) => {
+      const { query } = input as FileSideInput;
+      if (query.target === "all" && query.side === "old") {
+        return { outcome: "unavailable", code: "ENOENT", message: "base blob unavailable" };
       }
-      return originalDiffFile(args);
+      return originalFileSide(input);
     };
 
     await expect(
       captureWorkspace(fixture.sdk, "environment-one"),
-    ).rejects.toThrow(/base blob unavailable/u);
+    ).rejects.toThrow(/Workspace snapshot unavailable while reading base file src\/file\.ts: base blob unavailable/u);
+  });
+
+  it("reports a disabled Git plugin as an unavailable workspace snapshot", async () => {
+    const fixture = makeSdk({ files: { "src/file.ts": { content: "new" } } });
+    fixture.sdk.plugins.callRpc = async () => {
+      throw new Error("Plugin bb--git is disabled");
+    };
+
+    await expect(
+      captureWorkspace(fixture.sdk, "environment-one"),
+    ).rejects.toThrow(/Workspace snapshot unavailable while reading workspace status: Plugin bb--git is disabled/u);
   });
 
   it("rejects a truncated changed-file response", async () => {
@@ -357,13 +381,15 @@ describe("captureWorkspace", () => {
       },
     });
     expect(fixture.calls).toContainEqual({
-      area: "environments.diffFile",
+      area: "git.fileSide",
       args: {
         environmentId: "environment-one",
-        target: "all",
-        mergeBaseRef: "base-1",
-        path: "src/file.ts",
-        side: "old",
+        query: {
+          target: "all",
+          mergeBaseRef: "base-1",
+          path: "src/file.ts",
+          side: "old",
+        },
       },
     });
   });
@@ -385,28 +411,34 @@ describe("captureWorkspace", () => {
       captureWorkspace(diffFixture.sdk, "environment-one"),
     ).rejects.toThrow(/unavailable/u);
   });
-  it("reads workspace status and diffs through the bb--git plugin", async () => {
+  it("reads workspace status, diffs, changed files and file sides through the bb--git plugin", async () => {
     const fixture = makeSdk({ files: { "src/file.ts": { content: "new" } } });
-    // Drop the retired reads so only the bb--git RPC can serve them.
-    const { status: _status, diff: _diff, ...environments } = fixture.sdk.environments;
-    const rpcs: Array<{ method: string; input: unknown }> = [];
+    // The fake has no retired environment reads, so only the bb--git RPC can serve them.
+    expect(Object.keys(fixture.sdk.environments)).toEqual(["get"]);
+    const rpcs: Array<{ pluginId: string; method: string; input: unknown }> = [];
     const sdk = {
       ...fixture.sdk,
-      environments,
       plugins: {
         callRpc: async (args: Parameters<typeof fixture.sdk.plugins.callRpc>[0]) => {
-          rpcs.push({ method: args.method, input: args.input });
+          rpcs.push({ pluginId: args.pluginId, method: args.method, input: args.input });
           return fixture.sdk.plugins.callRpc(args);
         },
       },
     } as unknown as typeof fixture.sdk;
 
     expect(await captureWorkspace(sdk, "environment-one")).toMatch(/^[0-9a-f]{64}$/u);
-    expect(rpcs).toEqual(expect.arrayContaining([
-      { method: "workspaceStatus", input: { environmentId: "environment-one", mergeBaseBranch: "main" } },
-      { method: "diff", input: expect.objectContaining({ environmentId: "environment-one", target: { type: "branch_committed", mergeBaseBranch: "main" } }) },
-      { method: "diff", input: expect.objectContaining({ environmentId: "environment-one", target: { type: "uncommitted" } }) },
-      { method: "diff", input: expect.objectContaining({ environmentId: "environment-one", target: { type: "all", mergeBaseBranch: "main" } }) },
+    expect(new Set(rpcs.map(({ pluginId }) => pluginId))).toEqual(new Set(["bb--git"]));
+    const environmentId = "environment-one";
+    const committed = { type: "branch_committed", mergeBaseBranch: "main" };
+    const all = { type: "all", mergeBaseBranch: "main" };
+    expect(rpcs.map(({ method, input }) => ({ method, input }))).toEqual(expect.arrayContaining([
+      { method: "workspaceStatus", input: { environmentId, mergeBaseBranch: "main" } },
+      { method: "diff", input: { environmentId, target: committed } },
+      { method: "diff", input: { environmentId, target: { type: "uncommitted" } } },
+      { method: "diff", input: { environmentId, target: all } },
+      { method: "files", input: { environmentId, target: all, ignoreWhitespace: false } },
+      { method: "files", input: { environmentId, target: committed, ignoreWhitespace: false } },
+      { method: "fileSide", input: { environmentId, query: { target: "all", mergeBaseRef: "base-1", path: "src/file.ts", side: "old" } } },
     ]));
   });
 
@@ -422,10 +454,9 @@ describe("captureWorkspace", () => {
       return read(args);
     };
     const sdk = fixture.sdk as unknown as {
-      environments: { diffFile: (args: Record<string, unknown>) => Promise<unknown> };
       files: { read: (args: Record<string, unknown>) => Promise<unknown> };
     };
-    sdk.environments.diffFile = slow(sdk.environments.diffFile);
+    fixture.git.fileSide = slow(fixture.git.fileSide);
     sdk.files.read = slow(sdk.files.read);
 
     vi.useFakeTimers();

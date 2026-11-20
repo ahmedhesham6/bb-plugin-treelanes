@@ -66,6 +66,104 @@ export function makeWorkspaceSdk(options: {
       loadMode: "auto" as const,
     },
   ];
+  // The bb--git RPC methods, keyed by method name. A test can replace one.
+  const git = {
+    workspaceStatus: async (input: Record<string, unknown>): Promise<unknown> => {
+      calls.push({ area: "git.workspaceStatus", args: input });
+      if (options.statusOutcome === "unavailable") {
+        return {
+          outcome: "unavailable" as const,
+          failure: {
+            code: "unknown" as const,
+            message: "host unavailable",
+            workspacePath: "/srv/worktree",
+          },
+        };
+      }
+      return {
+        outcome: "available" as const,
+        workspace: {
+          branch: {
+            currentBranch: "feature/review",
+            defaultBranch: "main",
+          },
+          checkout: {
+            kind: "branch" as const,
+            branchName: "feature/review",
+            headSha: "head-1",
+          },
+          mergeBase: {
+            mergeBaseBranch: "main",
+            baseRef: "base-1",
+            aheadCount: 1,
+            behindCount: 0,
+            commits: [],
+            deletions: 1,
+            files: [],
+            hasCommittedUnmergedChanges: true,
+            insertions: 1,
+            lineStatsComplete: true,
+          },
+          workingTree: {
+            deletions: 1,
+            files: [],
+            hasUncommittedChanges: true,
+            insertions: 1,
+            lineStatsComplete: true,
+            state: "dirty_uncommitted" as const,
+          },
+        },
+      };
+    },
+    diff: async (input: Record<string, unknown>): Promise<unknown> => {
+      calls.push({ area: "git.diff", args: input });
+      if (options.diffOutcome === "unavailable") {
+        return {
+          outcome: "unavailable" as const,
+          failure: {
+            code: "unknown" as const,
+            message: "diff unavailable",
+            workspacePath: "/srv/worktree",
+          },
+        };
+      }
+      const target = (input.target as { type: DiffTarget }).type;
+      const mergeBaseRef = target === "uncommitted" ? null : "base-1";
+      return availableDiff(`${target}:current`, mergeBaseRef);
+    },
+    files: async (input: Record<string, unknown>): Promise<unknown> => {
+      calls.push({ area: "git.files", args: input });
+      const target = (input.target as { type: DiffTarget }).type;
+      const filesForTarget =
+        options.diffFilesByTarget?.[target] ?? changedFiles;
+      return {
+        outcome: "available" as const,
+        files: filesForTarget.map((file) => ({
+          ...file,
+          loadMode: file.loadMode ?? "auto",
+          revision: "revision-1",
+        })),
+        initialPatches: [],
+        mergeBaseRef: target === "uncommitted" ? null : "base-1",
+        shortstat: "1 file changed",
+        truncated: options.truncated ?? false,
+      };
+    },
+    fileSide: async (input: Record<string, unknown>): Promise<unknown> => {
+      calls.push({ area: "git.fileSide", args: input });
+      const query = input.query as { path: string; side: "old" | "new" };
+      const content = query.side === "old" ? "old" : files.get(query.path)?.content ?? "";
+      return {
+        outcome: "available" as const,
+        file: {
+          path: query.path,
+          content,
+          contentEncoding: "utf8" as const,
+          sizeBytes: content.length,
+        },
+      };
+    },
+  };
   const sdk = {
     environments: {
       get: async (args: Record<string, unknown>) => {
@@ -89,106 +187,17 @@ export function makeWorkspaceSdk(options: {
           updatedAt: 1,
         };
       },
-      status: async (args: Record<string, unknown>) => {
-        calls.push({ area: "environments.status", args });
-        if (options.statusOutcome === "unavailable") {
-          return {
-            outcome: "unavailable" as const,
-            failure: {
-              code: "unknown" as const,
-              message: "host unavailable",
-              workspacePath: "/srv/worktree",
-            },
-          };
-        }
-        return {
-          outcome: "available" as const,
-          workspace: {
-            branch: {
-              currentBranch: "feature/review",
-              defaultBranch: "main",
-            },
-            checkout: {
-              kind: "branch" as const,
-              branchName: "feature/review",
-              headSha: "head-1",
-            },
-            mergeBase: {
-              mergeBaseBranch: "main",
-              baseRef: "base-1",
-              aheadCount: 1,
-              behindCount: 0,
-              commits: [],
-              deletions: 1,
-              files: [],
-              hasCommittedUnmergedChanges: true,
-              insertions: 1,
-              lineStatsComplete: true,
-            },
-            workingTree: {
-              deletions: 1,
-              files: [],
-              hasUncommittedChanges: true,
-              insertions: 1,
-              lineStatsComplete: true,
-              state: "dirty_uncommitted" as const,
-            },
-          },
-        };
-      },
-      diff: async (args: Record<string, unknown>) => {
-        calls.push({ area: "environments.diff", args });
-        if (options.diffOutcome === "unavailable") {
-          return {
-            outcome: "unavailable" as const,
-            failure: {
-              code: "unknown" as const,
-              message: "diff unavailable",
-              workspacePath: "/srv/worktree",
-            },
-          };
-        }
-        const target = args.target as string;
-        const mergeBaseRef = target === "uncommitted" ? null : "base-1";
-        return availableDiff(`${target}:current`, mergeBaseRef);
-      },
-      diffFiles: async (args: Record<string, unknown>) => {
-        calls.push({ area: "environments.diffFiles", args });
-        const target = args.target as DiffTarget;
-        const filesForTarget =
-          options.diffFilesByTarget?.[target] ?? changedFiles;
-        return {
-          outcome: "available" as const,
-          files: filesForTarget.map((file) => ({
-            ...file,
-            loadMode: file.loadMode ?? "auto",
-          })),
-          initialPatches: [],
-          mergeBaseRef: args.target === "uncommitted" ? null : "base-1",
-          shortstat: "1 file changed",
-          truncated: options.truncated ?? false,
-        };
-      },
-      diffFile: async (args: Record<string, unknown>) => {
-        calls.push({ area: "environments.diffFile", args });
-        return {
-          path: args.path,
-          content: args.side === "old" ? "old" : files.get(args.path as string)?.content ?? "",
-          contentEncoding: "utf8" as const,
-          sizeBytes: args.side === "old" ? 3 : (files.get(args.path as string)?.content.length ?? 0),
-        };
-      },
     },
     plugins: {
-      // bb--git serves workspace status and diffs with the same rows.
-      callRpc: async ({ pluginId, method, input }: { pluginId: string; method: string; input: Record<string, unknown> }) => {
-        const environments = sdk.environments as unknown as Record<string, (args: Record<string, unknown>) => Promise<unknown>>;
-        if (pluginId === "bb--git" && method === "workspaceStatus") return environments.status!(input);
-        if (pluginId === "bb--git" && method === "diff") {
-          const { target: { type, ...target }, ...rest } = input as { target: { type: string } };
-          return environments.diff!({ ...rest, ...target, target: type });
-        }
-        throw new Error(`Unexpected RPC ${pluginId}.${method}`);
+      // The bb--git plugin serves these reads. The fake checks each result
+      // against the caller's schema, as bb's API client does.
+      callRpc: async ({ pluginId, method, input, outputSchema }: {
+        pluginId: string; method: string; input: Record<string, unknown>;
+        outputSchema: { parse(value: unknown): unknown };
+      }) => {
+        const read = pluginId === "bb--git" ? git[method as keyof typeof git] : undefined;
+        if (!read) throw new Error(`Unexpected RPC ${pluginId}.${method}`);
+        return outputSchema.parse(await read(input));
       },
     },
     files: {
@@ -211,5 +220,5 @@ export function makeWorkspaceSdk(options: {
     },
   } as unknown as Sdk;
 
-  return { sdk, calls, files };
+  return { sdk, calls, files, git };
 }

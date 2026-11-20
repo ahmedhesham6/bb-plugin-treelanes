@@ -1411,14 +1411,15 @@ export default definePluginApp((app) => {
     description: "One main thread per worktree. Children follow selection.",
     component: ThreadInbox,
   });
-  app.slots.experimental_threadHeaderAction({
+  // The way back to the parent comes first, then the list of children.
+  app.slots.experimental_threadHeaderRow({
     id: "parent",
-    title: "Parent thread",
+    order: 0,
     component: ParentChip,
   });
-  app.slots.experimental_threadHeaderAction({
+  app.slots.experimental_threadHeaderRow({
     id: "children",
-    title: "Child threads",
+    order: 1,
     component: SubagentsChip,
   });
 });

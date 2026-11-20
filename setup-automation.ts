@@ -9,7 +9,7 @@ import { findDispatchHolder } from "./dispatch";
 type Db = ReturnType<BbPluginApi["storage"]["database"]>;
 type Thread = { id: string; projectId: string; environmentId?: string | null; providerId: string;
   title?: string | null; status: "active" | "idle" | "error" | "pending" | "starting" | "stopping"; hasPendingInteraction?: boolean;
-  activity?: { activeWorkflowCount: number; activeBackgroundAgentCount: number; activeBackgroundCommandCount: number; activePlanModeCount: number; activeGoalCount: number };
+  activity?: { activeWorkflowCount: number; activeBackgroundAgentCount: number; activeBackgroundCommandCount: number; activePlanModeCount: number };
 };
 export type AutomationContext = {
   environmentId: string; stage: string; stageUpdatedAt: number; taskRevision: number;

@@ -67,7 +67,7 @@ flowchart LR
 
 ## Requirements
 
-- bb 0.43.3 or later.
+- bb 0.50 or later.
 - Git.
 - At least one agent harness that bb supports, such as Claude Code or Codex.
 - [GitHub CLI](https://cli.github.com) (`gh`), signed in, for PR Watch.
@@ -179,8 +179,8 @@ main thread for a worktree
 Pinned children raise their worktree into Pinned. Snoozed and Settled state
 stays per thread. A group stays in Inbox while any member has active work.
 
-The thread header shows parent and child chips. PR badges use bb's branch
-lookup; a branch without a PR has no badge.
+A row below the thread header shows parent and child chips. PR badges read
+bb's GitHub PR Status plugin; a branch without a PR has no badge.
 
 ## Settings
 
