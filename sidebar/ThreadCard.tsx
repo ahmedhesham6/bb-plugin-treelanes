@@ -204,7 +204,7 @@ export function ThreadCard(props: ThreadCardProps) {
                 <span className="grid min-h-7 shrink-0 items-center justify-items-end pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:gap-1">
                   <span
                     className={cn(
-                      "col-start-1 row-start-1 group-hover/card:opacity-0 group-has-[:focus-visible]/card:opacity-0",
+                      "col-start-1 row-start-1 group-hover/card:opacity-0 group-focus-within/card:opacity-0",
                       menuOpen && "opacity-0",
                     )}
                   >
@@ -212,7 +212,7 @@ export function ThreadCard(props: ThreadCardProps) {
                   </span>
                   <span
                     className={cn(
-                      "col-start-1 row-start-1 opacity-0 group-hover/card:opacity-100 group-has-[:focus-visible]/card:opacity-100 pointer-coarse:opacity-100",
+                      "col-start-1 row-start-1 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 pointer-coarse:opacity-100",
                       menuOpen && "opacity-100",
                     )}
                   >
@@ -224,7 +224,15 @@ export function ThreadCard(props: ThreadCardProps) {
             ) : (
               <span className="flex min-h-7 shrink-0 items-center gap-1 pointer-coarse:min-h-11">
                 <StatusOrTime thread={thread} now={now} />
-                <RowMenuButton {...menu} />
+                <span
+                  data-card-menu=""
+                  className={cn(
+                    "opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 pointer-coarse:opacity-100",
+                    menuOpen && "opacity-100",
+                  )}
+                >
+                  <RowMenuButton {...menu} onOpenChange={setMenuOpen} />
+                </span>
               </span>
             )}
           </div>
@@ -247,6 +255,7 @@ export function ThreadCard(props: ThreadCardProps) {
           )}
           {!compact && (
             <div className="pointer-events-none relative mt-1 flex min-h-6 items-center gap-2 text-xs text-muted-foreground">
+              <ProviderGlyph providerId={thread.providerId} leading />
               <span
                 className="min-w-0 flex-1 truncate"
                 title={[projectName, location].filter(Boolean).join(" / ")}
@@ -279,7 +288,6 @@ export function ThreadCard(props: ThreadCardProps) {
                   />
                 </button>
               )}
-              <ProviderGlyph providerId={thread.providerId} />
             </div>
           )}
           {Object.entries(thread.activity)

@@ -406,7 +406,30 @@ it("lays out a Child Row on one line: title, time, then the agent glyph", async 
   expect(document.activeElement).toBe(button);
 });
 
-it("puts the agent glyph at the far right of a Worktree Card's meta line", async () => {
+it("shows a Worktree Card's menu button only on hover, focus, an open menu or a touch screen", async () => {
+  mountWorktree(
+    [fixture("main", "env", { providerId: "claude-code" })],
+    [],
+    "elsewhere",
+  );
+  const link = await screen.findByRole("link", { name: "main" });
+  const item = link.closest("li")!;
+  const button = within(item).getByRole("button", { name: /actions/i });
+  const wrapper = button.closest("[data-card-menu]")!;
+  const classes = wrapper.getAttribute("class")!.split(" ");
+  expect(classes).toEqual(
+    expect.arrayContaining([
+      "opacity-0",
+      "group-hover/card:opacity-100",
+      "group-focus-within/card:opacity-100",
+      "pointer-coarse:opacity-100",
+    ]),
+  );
+  button.focus();
+  expect(document.activeElement).toBe(button);
+});
+
+it("starts a Worktree Card's meta line with the agent glyph", async () => {
   mountWorktree(
     [
       fixture("main", "env", { providerId: "claude-code" }),
@@ -421,11 +444,11 @@ it("puts the agent glyph at the far right of a Worktree Card's meta line", async
   const toggle = within(item).getByRole("button", { name: "Expand main" });
   const glyph = within(item).getByRole("img", { name: "Claude Code" });
   expect(toggle.textContent).toContain("2 threads");
+  expect(follows(glyph, meta)).toBe(true);
   expect(follows(meta, toggle)).toBe(true);
-  expect(follows(toggle, glyph)).toBe(true);
   expect(meta.closest(".truncate")).not.toBeNull();
-  expect(glyph.getAttribute("class")).toContain("size-3.5");
-  expect(glyph.getAttribute("class")).toContain("opacity-60");
+  expect(glyph.getAttribute("class")).toContain("size-3");
+  expect(glyph.getAttribute("class")).toContain("text-muted-foreground/70");
 });
 
 it("asks for the titles of every board worker in bounded batches", async () => {
